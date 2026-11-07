@@ -57,6 +57,18 @@ You also need:
 | `--json` | Print JSON, described in [docs/reference.md](docs/reference.md) |
 | `--debug` | Print each command gh reap runs |
 
+### Many repositories
+
+`gh reap --repos <dir>` lists every repository in a folder. `remove` works in one
+repository at a time, so run it in each, for example with a shell loop:
+
+```sh
+for d in ~/src/*/; do (cd "$d" && gh reap remove --all --dry-run); done
+```
+
+or, with [myrepos](https://myrepos.branchable.com/), `mr run gh reap remove --all --dry-run`.
+Drop `--dry-run` to remove.
+
 ## How it decides
 
 An item is **REMOVE** only when all of these hold:
