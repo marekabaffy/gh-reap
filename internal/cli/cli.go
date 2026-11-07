@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/marekabaffy/gh-reap/internal/conn"
 	"github.com/marekabaffy/gh-reap/internal/reap"
+	"golang.org/x/term"
 )
 
 // Exit codes.
@@ -27,54 +29,42 @@ const (
 	ExitUsage = 2
 )
 
-const usage = `Remove the worktrees and local branches of finished GitHub pull requests, safely.
+const usage = `Remove the worktrees and local branches of merged pull requests, safely.
 
 USAGE
-  gh reap [list] [flags]              List every worktree and local branch: REMOVE or KEEP, and why
-  gh reap remove <ref>... [flags]     Remove the named items, if a fresh list still says REMOVE
-  gh reap remove --all [flags]        Remove every item a fresh list says REMOVE
-  gh reap keep <branch>...            Never reap these branches (or their worktrees)
-  gh reap unkeep <branch>...          Undo keep
-
-  A <ref> is the ref column of --json, a branch name, or a worktree path.
+  gh reap [--all]              Show what can be removed, and what is blocked
+  gh reap remove [<name>...]   Remove it, after you confirm; <name> is a branch or worktree path
+  gh reap keep <branch>...     Never remove these branches
+  gh reap unkeep <branch>...   Undo keep
 
 FLAGS
-  --state merged|closed   Which PRs count as finished: merged (default), or closed
-                          (merged, or closed without merging)
-  --json                  Print JSON (see docs/reference.md)
-  --dry-run               remove: show what would happen, change nothing
-  --all                   remove: every REMOVE item
-  --repos <dir>           list: every git repository directly under <dir>
-                          (the default when the current folder is not a repository)
-  --debug                 Print each command run, to stderr
-  -h, --help              Show this help
+  --all     Also show open PRs, branches without a PR, and kept branches
+  --yes     remove: do not ask (needed without a terminal)
+  --json    Print JSON (see docs/reference.md)
+  --debug   Print each command run, to stderr
+  -h, --help  Show this help
 
-A worktree or branch is REMOVE only when its newest PR (by head branch) is merged,
-the branch tip is that PR's head or behind it, nothing on it is missing from the PR
-or a remote, the tree is clean, no process works inside it, it is not locked (git
-worktree lock) or marked keep, and it is not the main checkout, the default branch or
-the main checkout's branch. Before a worktree goes, its pre-worktree-remove git hook
-runs; a failing hook keeps the tree.
+A branch goes only when its pull request merged and nothing on it is missing from
+the PR or a remote; a worktree, also only when it is clean, unlocked and unused.
+Its pre-worktree-remove git hook runs first.
 
 EXIT STATUS
   0  success
-  1  an item failed or was refused, or the list is incomplete (no lsof, GitHub unreachable)
+  1  an item failed or was refused, the checks were incomplete, or another run holds the lock
   2  usage error
 `
 
 type flags struct {
-	state  string
-	json   bool
-	dryRun bool
-	all    bool
-	repos  string
-	debug  bool
-	help   bool
+	all   bool
+	yes   bool
+	json  bool
+	debug bool
+	help  bool
 }
 
 // Run runs gh reap with args (without the program name) and returns the exit code.
-func Run(args []string, stdout, stderr io.Writer) int {
-	cmd := "list"
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	cmd := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]
 	}
@@ -85,17 +75,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	var f flags
 	fs := flag.NewFlagSet("gh reap", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&f.state, "state", "merged", "")
-	fs.BoolVar(&f.json, "json", false, "")
 	fs.BoolVar(&f.debug, "debug", false, "")
 	fs.BoolVar(&f.help, "help", false, "")
 	fs.BoolVar(&f.help, "h", false, "")
 	switch cmd {
-	case "list":
-		fs.StringVar(&f.repos, "repos", "", "")
-	case "remove":
-		fs.BoolVar(&f.dryRun, "dry-run", false, "")
+	case "":
 		fs.BoolVar(&f.all, "all", false, "")
+		fs.BoolVar(&f.json, "json", false, "")
+	case "remove":
+		fs.BoolVar(&f.yes, "yes", false, "")
+		fs.BoolVar(&f.json, "json", false, "")
 	case "keep", "unkeep":
 	default:
 		return usageError(stderr, "unknown command %q", cmd)
@@ -108,9 +97,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return ExitOK
 	}
-	if f.state != "merged" && f.state != "closed" {
-		return usageError(stderr, "--state must be merged or closed, not %q", f.state)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -118,28 +104,41 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if f.debug {
 		x.Debug = stderr
 	}
-	opt, err := gatherOptions(f)
+	opt, err := gatherOptions()
 	if err != nil {
 		return usageError(stderr, "%v", err)
 	}
 
 	switch cmd {
-	case "list":
+	case "":
 		if len(pos) > 0 {
-			return usageError(stderr, "list takes no arguments (did you mean remove?)")
+			return usageError(stderr, "unexpected %q (to remove it: gh reap remove %s)", pos[0], pos[0])
 		}
 		return runList(ctx, x, f, opt, stdout, stderr)
 	case "remove":
-		if len(pos) == 0 && !f.all {
-			return usageError(stderr, "remove needs <ref>... or --all")
+		if !f.yes {
+			switch {
+			case f.json:
+				return usageError(stderr, "--json needs --yes")
+			case !interactive(stdin, stdout):
+				return usageError(stderr, "no terminal to confirm; use --yes")
+			}
 		}
-		return runRemove(ctx, x, f, opt, pos, stdout, stderr)
+		return runRemove(ctx, x, f, opt, pos, stdin, stdout, stderr)
 	default:
 		if len(pos) == 0 {
 			return usageError(stderr, "%s needs at least one branch", cmd)
 		}
 		return runKeep(ctx, x, cmd == "keep", pos, stdout, stderr)
 	}
+}
+
+// interactive says whether a person can answer a question: stdin and stdout
+// are both a terminal.
+var interactive = func(stdin io.Reader, stdout io.Writer) bool {
+	in, ok := stdin.(*os.File)
+	out, ok2 := stdout.(*os.File)
+	return ok && ok2 && term.IsTerminal(int(in.Fd())) && term.IsTerminal(int(out.Fd()))
 }
 
 func usageError(stderr io.Writer, format string, a ...any) int {
@@ -171,9 +170,8 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-func gatherOptions(f flags) (reap.GatherOptions, error) {
+func gatherOptions() (reap.GatherOptions, error) {
 	opt := reap.GatherOptions{
-		Options:   reap.Options{IncludeClosed: f.state == "closed"},
 		KnownHost: knownHost,
 		Ignore:    ignoreSelf(),
 		Sizes:     true,
@@ -210,24 +208,15 @@ func ignoreSelf() func(conn.Process) bool {
 }
 
 func runList(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, stdout, stderr io.Writer) int {
+	// Outside a repository, list every repository directly under this folder.
 	dirs := []string{"."}
-	switch {
-	case f.repos != "":
-		found, err := reposUnder(ctx, c, f.repos)
-		if err != nil {
-			fmt.Fprintf(stderr, "gh reap: %v\n", err)
+	if _, err := c.CommonDir(ctx, "."); err != nil {
+		found, ferr := reposUnder(ctx, c, ".")
+		if ferr != nil || len(found) == 0 {
+			fmt.Fprintln(stderr, "gh reap: not in a git repository, and no git repositories directly under this folder")
 			return ExitFail
 		}
 		dirs = found
-	default:
-		if _, err := c.CommonDir(ctx, "."); err != nil {
-			found, ferr := reposUnder(ctx, c, ".")
-			if ferr != nil || len(found) == 0 {
-				fmt.Fprintln(stderr, "gh reap: not in a git repository, and no git repositories directly under this folder")
-				return ExitFail
-			}
-			dirs = found
-		}
 	}
 
 	code := ExitOK
@@ -254,7 +243,7 @@ func runList(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, 
 			if i > 0 {
 				fmt.Fprintln(stdout)
 			}
-			printInventory(stdout, inv, len(dirs) > 1)
+			printInventory(stdout, inv, len(dirs) > 1, f.all)
 		}
 	}
 	return code
@@ -292,11 +281,15 @@ func reposUnder(ctx context.Context, c conn.Conn, dir string) ([]string, error) 
 	return dirs, nil
 }
 
-func runRemove(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, refs []string, stdout, stderr io.Writer) int {
-	ropt := reap.RemoveOptions{GatherOptions: opt, Refs: refs, All: f.all, DryRun: f.dryRun}
+func runRemove(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, refs []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	ropt := reap.RemoveOptions{GatherOptions: opt, Refs: refs}
 	ropt.Sizes = false
 	if !f.json {
 		ropt.Progress = func(r reap.Result) { printResult(stdout, r) }
+	}
+	if !f.yes {
+		answers := bufio.NewReader(stdin)
+		ropt.Confirm = func(items []reap.Item) bool { return confirm(stdout, answers, items) }
 	}
 	rep, err := reap.Remove(ctx, c, ".", ropt)
 	if err != nil {
@@ -310,6 +303,9 @@ func runRemove(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions
 		writeJSON(stdout, rep)
 	} else {
 		printSummary(stdout, stderr, rep)
+	}
+	if rep.Canceled {
+		return ExitOK
 	}
 	if !rep.OK() {
 		return ExitFail
@@ -351,9 +347,9 @@ func runKeep(ctx context.Context, c conn.Conn, keep bool, branches []string, std
 			continue
 		}
 		if keep {
-			fmt.Fprintf(stdout, "%s: kept (gh reap will never remove it or its worktree)\n", b)
+			fmt.Fprintf(stdout, "%s: marked keep\n", b)
 		} else {
-			fmt.Fprintf(stdout, "%s: no longer kept\n", b)
+			fmt.Fprintf(stdout, "%s: unmarked\n", b)
 		}
 	}
 	return code

@@ -1,6 +1,6 @@
 # Reference
 
-## `gh reap list --json`
+## `gh reap --json`
 
 ```json
 {
@@ -40,7 +40,7 @@ there are none), `items`.
 | `ref` | always | `worktree:<path>` or `branch:<name>`; pass it to `gh reap remove` |
 | `verdict` | always | `REMOVE` or `KEEP` |
 | `reason` | always | a reason code, below |
-| `detail` | always | a sentence for people; its wording may change |
+| `detail` | always | a few words for people; the wording may change |
 | `branch` | unless detached | the branch name |
 | `oid` | except the bare repository | the branch tip (a detached worktree: its HEAD) |
 | `path` | worktrees | the worktree folder |
@@ -50,16 +50,16 @@ there are none), `items`.
 
 ## `gh reap remove --json`
 
-Prints `repo`, `dry_run`, `problems` (when the list was incomplete) and `results`, one per
-chosen ref: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `would-remove`,
-`failed`, `refused`), `reason`, `detail`.
+Needs `--yes`. Prints `repo`, `problems` (when the list was incomplete) and `results`, one
+per item: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `failed`, `refused`),
+`reason`, `detail`.
 
 ## Reason codes
 
 | Code | Verdict | Meaning |
 |---|---|---|
 | `pr-merged` | REMOVE | its PR merged and every rule holds |
-| `pr-closed` | REMOVE with `--state closed`, else KEEP | its PR was closed without merging |
+| `pr-closed` | KEEP | its PR was closed without merging |
 | `folder-gone` | REMOVE | a registered worktree whose folder no longer exists |
 | `main-checkout` | KEEP | the main checkout |
 | `locked` | KEEP | locked with `git worktree lock` |
@@ -81,7 +81,7 @@ chosen ref: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `would-remove`
 | `check-failed` | KEEP | a git command needed for the checks failed |
 | `git-too-old-for-hooks` | KEEP | this git cannot run the teardown hook |
 | `hook-check-failed` | KEEP | listing the hook failed |
-| `inventory-incomplete` | KEEP | would be REMOVE, but the list is incomplete |
+| `inventory-incomplete` | KEEP | would be REMOVE, but the checks were incomplete |
 
 `remove` results add:
 
@@ -93,17 +93,17 @@ chosen ref: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `would-remove`
 | any KEEP reason, after the hook | the hook changed the tree (left a process running, files, a moved or detached HEAD); the tree is kept |
 | `worktree-remove-failed` | `git worktree remove` refused |
 | `branch-delete-failed` | the branch was kept; `detail` says whether its worktree was removed |
-| `canceled` | interrupted before this item |
+| `canceled` | interrupted (Ctrl-C) |
 
 ## Exit status
 
 | Code | Meaning |
 |---|---|
 | 0 | success |
-| 1 | an item failed or was refused, the list is incomplete, or another `remove` holds the lock |
+| 1 | an item failed or was refused, the checks were incomplete, or another `remove` holds the lock |
 | 2 | usage error |
 
-With `--repos`, the exit status covers every repository.
+Listing a folder of repositories, the exit status covers every repository.
 
 ## Which GitHub repository
 
