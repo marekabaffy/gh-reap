@@ -1,0 +1,24 @@
+version: "2"
+
+run:
+  build-tags: [contract]
+
+linters:
+  # The default set (errcheck, govet, ineffassign, staticcheck, unused), plus:
+  enable:
+    - errorlint
+    - gocritic
+    - misspell
+    - nolintlint
+    - unconvert
+    - unparam
+    - usestdlibvars
+  exclusions:
+    # Unchecked writes to stdout and stderr, Close and the like: the Go convention.
+    presets: [std-error-handling]
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+

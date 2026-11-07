@@ -1,0 +1,1 @@
+error: cannot lock ref 'refs/heads/squashed': is at c5054b33d7252f88b00fa2e330b1a9f49d0ef3ed but expected 4038e29f7b6045521864de786bc46075e9ad791c

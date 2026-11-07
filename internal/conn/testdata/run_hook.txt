@@ -1,0 +1,1 @@
+teardown for $ROOT/wt-merged

@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Recorded command output: compared byte for byte, never converted.
+internal/conn/testdata/** -text

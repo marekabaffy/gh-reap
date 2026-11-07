@@ -1,0 +1,23 @@
+name: Bug report
+description: gh reap did something wrong or unexpected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The command you ran and its output. `--debug` adds every command gh reap ran.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: "`gh extension list`, `git --version`, and your OS"
+    validations:
+      required: true

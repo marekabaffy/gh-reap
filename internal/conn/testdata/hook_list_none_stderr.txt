@@ -1,0 +1,1 @@
+warning: no hooks found for event 'pre-worktree-remove'
