@@ -49,12 +49,6 @@ const (
 	ReasonHookUnknown      = "hook-check-failed"
 )
 
-// Options are the user's choices that change verdicts.
-type Options struct {
-	// IncludeClosed makes a CLOSED (unmerged) PR count as finished, like MERGED.
-	IncludeClosed bool
-}
-
 // BranchFacts is everything the rules need to know about a local branch.
 type BranchFacts struct {
 	Name string
@@ -105,88 +99,83 @@ func keep(reason, detail string) Decision { return Decision{VerdictKeep, reason,
 
 // DecideBranch applies the PR rules to a branch, whether it stands alone or is
 // checked out in a worktree.
-func DecideBranch(b BranchFacts, opt Options) Decision {
+func DecideBranch(b BranchFacts) Decision {
 	switch {
 	case b.Keep:
-		return keep(ReasonKeepMark, "marked keep (gh reap unkeep "+b.Name+" to undo)")
+		return keep(ReasonKeepMark, "marked keep")
 	case b.Protected == ReasonDefaultBranch:
-		return keep(ReasonDefaultBranch, "the repository's default branch")
+		return keep(ReasonDefaultBranch, "default branch")
 	case b.Protected == ReasonCurrentBranch:
 		return keep(ReasonCurrentBranch, "checked out in the main checkout")
 	case b.PRErr != nil:
-		return keep(ReasonPRUnknown, "could not read pull requests: "+b.PRErr.Error())
+		return keep(ReasonPRUnknown, "PR unknown: "+b.PRErr.Error())
 	case b.PR == nil:
-		return keep(ReasonNoPR, "no pull request from this repository or your remotes has this branch as its head")
+		return keep(ReasonNoPR, "no PR")
 	}
 	pr := *b.PR
 	switch pr.State {
 	case "MERGED":
 	case "CLOSED":
-		if !opt.IncludeClosed {
-			return keep(ReasonPRClosed, fmt.Sprintf("PR #%d closed without merging (--state closed to include)", pr.Number))
-		}
+		return keep(ReasonPRClosed, fmt.Sprintf("PR #%d closed", pr.Number))
 	case "OPEN":
-		return keep(ReasonPROpen, fmt.Sprintf("PR #%d is open", pr.Number))
+		return keep(ReasonPROpen, fmt.Sprintf("PR #%d open", pr.Number))
 	default:
-		return keep(ReasonPRUnknown, fmt.Sprintf("PR #%d has unknown state %q", pr.Number, pr.State))
+		return keep(ReasonPRUnknown, fmt.Sprintf("PR #%d state %q", pr.Number, pr.State))
 	}
 	switch {
 	case b.CheckErr != nil:
 		return keep(ReasonCheckFailed, b.CheckErr.Error())
 	case !b.HeadPresent:
-		return keep(ReasonPRHeadMissing, fmt.Sprintf("PR #%d head %s is not in this clone (git fetch, then retry)", pr.Number, short(pr.HeadOID)))
+		return keep(ReasonPRHeadMissing, "PR head not fetched (git fetch)")
 	case b.Unpushed > 0:
-		return keep(ReasonUnpushed, fmt.Sprintf("%d %s neither in PR #%d nor on any remote", b.Unpushed, plural(b.Unpushed, "commit", "commits"), pr.Number))
+		return keep(ReasonUnpushed, fmt.Sprintf("%d %s not in PR or remote", b.Unpushed, plural(b.Unpushed, "commit", "commits")))
 	case !b.Ancestor:
-		return keep(ReasonNotOnPR, fmt.Sprintf("branch tip %s is not PR #%d's head %s or behind it", short(b.OID), pr.Number, short(pr.HeadOID)))
-	}
-	if pr.State == "CLOSED" {
-		return Decision{VerdictRemove, ReasonPRClosed, fmt.Sprintf("PR #%d closed", pr.Number)}
+		return keep(ReasonNotOnPR, fmt.Sprintf("tip %s not on PR head %s", short(b.OID), short(pr.HeadOID)))
 	}
 	return Decision{VerdictRemove, ReasonPRMerged, fmt.Sprintf("PR #%d merged", pr.Number)}
 }
 
 // DecideTree applies the worktree rules, then the PR rules to its branch. b is nil
 // for a detached or bare worktree.
-func DecideTree(t TreeFacts, b *BranchFacts, opt Options) Decision {
+func DecideTree(t TreeFacts, b *BranchFacts) Decision {
 	switch {
 	case t.Main:
-		return keep(ReasonMainCheckout, "the main checkout")
+		return keep(ReasonMainCheckout, "main checkout")
 	case t.Locked:
-		detail := "locked with git worktree lock"
+		detail := "locked"
 		if t.LockReason != "" {
 			detail += ": " + t.LockReason
 		}
 		return keep(ReasonLocked, detail)
 	case t.Missing:
-		return Decision{VerdictRemove, ReasonFolderGone, "folder is gone; only git's registration is left"}
+		return Decision{VerdictRemove, ReasonFolderGone, "folder gone"}
 	case len(t.Contains) > 0:
-		return keep(ReasonContainsTree, "contains the worktree "+strings.Join(t.Contains, ", "))
+		return keep(ReasonContainsTree, "contains worktree "+strings.Join(t.Contains, ", "))
 	case t.Detached || b == nil:
-		return keep(ReasonDetached, "detached HEAD: no branch to match a PR")
+		return keep(ReasonDetached, "detached HEAD")
 	}
-	if d := DecideBranch(*b, opt); d.Verdict == VerdictKeep && (d.Reason == ReasonKeepMark || d.Reason == ReasonDefaultBranch || d.Reason == ReasonCurrentBranch) {
+	if d := DecideBranch(*b); d.Verdict == VerdictKeep && (d.Reason == ReasonKeepMark || d.Reason == ReasonDefaultBranch || d.Reason == ReasonCurrentBranch) {
 		return d
 	}
 	switch {
 	case t.ProcessesErr != nil:
-		return keep(ReasonProcessesUnknown, "cannot see which processes use it: "+t.ProcessesErr.Error())
+		return keep(ReasonProcessesUnknown, "processes unknown: "+t.ProcessesErr.Error())
 	case len(t.Holders) > 0:
 		return keep(ReasonInUse, "in use by "+holders(t.Holders))
 	case t.StatusErr != nil:
 		return keep(ReasonStatusFailed, "git status failed: "+t.StatusErr.Error())
 	case t.Dirty > 0:
-		return keep(ReasonDirty, fmt.Sprintf("%d uncommitted or untracked %s", t.Dirty, plural(t.Dirty, "file", "files")))
+		return keep(ReasonDirty, fmt.Sprintf("%d uncommitted %s", t.Dirty, plural(t.Dirty, "file", "files")))
 	}
-	d := DecideBranch(*b, opt)
+	d := DecideBranch(*b)
 	if d.Verdict == VerdictKeep {
 		return d
 	}
 	switch t.Hook {
 	case conn.HookUnsupported:
-		return keep(ReasonGitTooOld, "this git cannot run a pre-worktree-remove hook (needs config-based hooks), so teardown cannot run")
+		return keep(ReasonGitTooOld, "git too old for hooks")
 	case conn.HookUnknown:
-		return keep(ReasonHookUnknown, "could not check for a pre-worktree-remove hook")
+		return keep(ReasonHookUnknown, "hook check failed")
 	}
 	return d
 }
@@ -194,8 +183,8 @@ func DecideTree(t TreeFacts, b *BranchFacts, opt Options) Decision {
 func holders(ps []conn.Process) string {
 	var parts []string
 	for i, p := range ps {
-		if i == 3 {
-			parts = append(parts, fmt.Sprintf("%d more", len(ps)-3))
+		if i == 1 {
+			parts = append(parts, fmt.Sprintf("%d more", len(ps)-1))
 			break
 		}
 		parts = append(parts, fmt.Sprintf("%s (pid %d)", p.Command, p.PID))

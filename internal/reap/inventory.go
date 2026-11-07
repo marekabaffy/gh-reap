@@ -46,14 +46,12 @@ type Inventory struct {
 	Items     []Item   `json:"items"`
 	CommonDir string   `json:"-"`
 
-	prs     *conn.PRResult
-	prErr   error
-	options Options
+	prs   *conn.PRResult
+	prErr error
 }
 
 // GatherOptions control one Gather.
 type GatherOptions struct {
-	Options
 	// Repo overrides the repository found from the remotes (GH_REPO).
 	Repo *conn.Repo
 	// KnownHost says whether a remote's host is a GitHub host gh can talk to.
@@ -82,7 +80,7 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 	if len(trees) == 0 {
 		return nil, errors.New("git worktree list returned nothing")
 	}
-	inv := &Inventory{Root: trees[0].Path, Complete: true, options: opt.Options}
+	inv := &Inventory{Root: trees[0].Path, Complete: true}
 	root := inv.Root
 	if inv.CommonDir, err = c.CommonDir(ctx, dir); err != nil {
 		return nil, err
@@ -268,7 +266,7 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 			has := tf.Hook == conn.HookConfigured
 			item.Hook = &has
 		}
-		d := DecideTree(*tf, bf, opt.Options)
+		d := DecideTree(*tf, bf)
 		item.Verdict, item.Reason, item.Detail = d.Verdict, d.Reason, d.Detail
 		inv.Items = append(inv.Items, item)
 	}
@@ -277,7 +275,7 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 		if f == nil || held[b.Name] {
 			continue
 		}
-		d := DecideBranch(*f, opt.Options)
+		d := DecideBranch(*f)
 		inv.Items = append(inv.Items, Item{
 			Kind: KindBranch, Ref: RefOf(KindBranch, b.Name), Branch: b.Name,
 			OID: b.OID, PR: f.PR, Verdict: d.Verdict, Reason: d.Reason, Detail: d.Detail,
@@ -290,7 +288,7 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 		for i := range inv.Items {
 			if inv.Items[i].Verdict == VerdictRemove {
 				inv.Items[i].Verdict, inv.Items[i].Reason = VerdictKeep, ReasonIncomplete
-				inv.Items[i].Detail = "would be removed, but the list is incomplete: " + inv.Items[i].Detail
+				inv.Items[i].Detail = "checks incomplete"
 			}
 		}
 	}

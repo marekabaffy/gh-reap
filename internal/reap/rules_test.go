@@ -25,27 +25,25 @@ func TestDecideBranch(t *testing.T) {
 	tests := []struct {
 		name    string
 		edit    func(*BranchFacts)
-		opt     Options
 		verdict Verdict
 		reason  string
 		detail  string
 	}{
-		{"merged, tip is the PR head", nil, Options{}, VerdictRemove, ReasonPRMerged, "PR #7 merged"},
-		{"merged, tip behind the PR head", func(b *BranchFacts) { b.PR.HeadOID = head }, Options{}, VerdictRemove, ReasonPRMerged, ""},
-		{"closed, default", func(b *BranchFacts) { b.PR.State = "CLOSED" }, Options{}, VerdictKeep, ReasonPRClosed, "--state closed"},
-		{"closed, --state closed", func(b *BranchFacts) { b.PR.State = "CLOSED" }, Options{IncludeClosed: true}, VerdictRemove, ReasonPRClosed, "PR #7 closed"},
-		{"open", func(b *BranchFacts) { b.PR.State = "OPEN" }, Options{IncludeClosed: true}, VerdictKeep, ReasonPROpen, "PR #7 is open"},
-		{"unknown state", func(b *BranchFacts) { b.PR.State = "DRAFTY" }, Options{}, VerdictKeep, ReasonPRUnknown, "DRAFTY"},
-		{"no PR", func(b *BranchFacts) { b.PR = nil }, Options{}, VerdictKeep, ReasonNoPR, ""},
-		{"PR read failed", func(b *BranchFacts) { b.PRErr = errors.New("HTTP 502") }, Options{}, VerdictKeep, ReasonPRUnknown, "HTTP 502"},
-		{"keep mark beats a merged PR", func(b *BranchFacts) { b.Keep = true }, Options{}, VerdictKeep, ReasonKeepMark, "unkeep feat"},
-		{"default branch", func(b *BranchFacts) { b.Protected = ReasonDefaultBranch }, Options{}, VerdictKeep, ReasonDefaultBranch, ""},
-		{"main checkout's branch", func(b *BranchFacts) { b.Protected = ReasonCurrentBranch }, Options{}, VerdictKeep, ReasonCurrentBranch, ""},
-		{"PR head not in this clone", func(b *BranchFacts) { b.HeadPresent, b.Ancestor = false, false }, Options{}, VerdictKeep, ReasonPRHeadMissing, "git fetch"},
-		{"commits past the PR head, unpushed", func(b *BranchFacts) { b.Unpushed, b.Ancestor = 2, false }, Options{}, VerdictKeep, ReasonUnpushed, "2 commits"},
-		{"one unpushed commit (merge commits count)", func(b *BranchFacts) { b.Unpushed, b.Ancestor = 1, false }, Options{}, VerdictKeep, ReasonUnpushed, "1 commit "},
-		{"tip on a remote but not the PR", func(b *BranchFacts) { b.Ancestor = false }, Options{}, VerdictKeep, ReasonNotOnPR, "not PR #7's head"},
-		{"a check failed", func(b *BranchFacts) { b.CheckErr = errors.New("git died") }, Options{}, VerdictKeep, ReasonCheckFailed, "git died"},
+		{"merged, tip is the PR head", nil, VerdictRemove, ReasonPRMerged, "PR #7 merged"},
+		{"merged, tip behind the PR head", func(b *BranchFacts) { b.PR.HeadOID = head }, VerdictRemove, ReasonPRMerged, ""},
+		{"closed", func(b *BranchFacts) { b.PR.State = "CLOSED" }, VerdictKeep, ReasonPRClosed, "PR #7 closed"},
+		{"open", func(b *BranchFacts) { b.PR.State = "OPEN" }, VerdictKeep, ReasonPROpen, "PR #7 open"},
+		{"unknown state", func(b *BranchFacts) { b.PR.State = "DRAFTY" }, VerdictKeep, ReasonPRUnknown, "DRAFTY"},
+		{"no PR", func(b *BranchFacts) { b.PR = nil }, VerdictKeep, ReasonNoPR, ""},
+		{"PR read failed", func(b *BranchFacts) { b.PRErr = errors.New("HTTP 502") }, VerdictKeep, ReasonPRUnknown, "HTTP 502"},
+		{"keep mark beats a merged PR", func(b *BranchFacts) { b.Keep = true }, VerdictKeep, ReasonKeepMark, "marked keep"},
+		{"default branch", func(b *BranchFacts) { b.Protected = ReasonDefaultBranch }, VerdictKeep, ReasonDefaultBranch, ""},
+		{"main checkout's branch", func(b *BranchFacts) { b.Protected = ReasonCurrentBranch }, VerdictKeep, ReasonCurrentBranch, ""},
+		{"PR head not in this clone", func(b *BranchFacts) { b.HeadPresent, b.Ancestor = false, false }, VerdictKeep, ReasonPRHeadMissing, "git fetch"},
+		{"commits past the PR head, unpushed", func(b *BranchFacts) { b.Unpushed, b.Ancestor = 2, false }, VerdictKeep, ReasonUnpushed, "2 commits"},
+		{"one unpushed commit (merge commits count)", func(b *BranchFacts) { b.Unpushed, b.Ancestor = 1, false }, VerdictKeep, ReasonUnpushed, "1 commit "},
+		{"tip on a remote but not the PR", func(b *BranchFacts) { b.Ancestor = false }, VerdictKeep, ReasonNotOnPR, "not on PR head"},
+		{"a check failed", func(b *BranchFacts) { b.CheckErr = errors.New("git died") }, VerdictKeep, ReasonCheckFailed, "git died"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -55,7 +53,7 @@ func TestDecideBranch(t *testing.T) {
 			if tt.edit != nil {
 				tt.edit(&b)
 			}
-			d := DecideBranch(b, tt.opt)
+			d := DecideBranch(b)
 			if d.Verdict != tt.verdict || d.Reason != tt.reason || !strings.Contains(d.Detail, tt.detail) {
 				t.Errorf("got %s %s %q, want %s %s containing %q", d.Verdict, d.Reason, d.Detail, tt.verdict, tt.reason, tt.detail)
 			}
@@ -84,9 +82,9 @@ func TestDecideTree(t *testing.T) {
 		{"default branch checked out", nil, func(b *BranchFacts) { b.Protected = ReasonDefaultBranch }, VerdictKeep, ReasonDefaultBranch, ""},
 		{"in use", func(t *TreeFacts) {
 			t.Holders = []conn.Process{{PID: 4, Command: "zsh"}, {PID: 5, Command: "vim"}, {PID: 6, Command: "node"}, {PID: 7, Command: "x"}}
-		}, nil, VerdictKeep, ReasonInUse, "zsh (pid 4), vim (pid 5), node (pid 6), 1 more"},
+		}, nil, VerdictKeep, ReasonInUse, "zsh (pid 4), 3 more"},
 		{"processes unknown", func(t *TreeFacts) { t.ProcessesErr = errors.New("lsof: not found") }, nil, VerdictKeep, ReasonProcessesUnknown, "lsof"},
-		{"dirty", func(t *TreeFacts) { t.Dirty = 1 }, nil, VerdictKeep, ReasonDirty, "1 uncommitted or untracked file"},
+		{"dirty", func(t *TreeFacts) { t.Dirty = 1 }, nil, VerdictKeep, ReasonDirty, "1 uncommitted file"},
 		{"status failed", func(t *TreeFacts) { t.StatusErr = errors.New("index corrupt") }, nil, VerdictKeep, ReasonStatusFailed, "index corrupt"},
 		{"PR open", nil, func(b *BranchFacts) { b.PR.State = "OPEN" }, VerdictKeep, ReasonPROpen, ""},
 		{"unpushed", nil, func(b *BranchFacts) { b.Unpushed, b.Ancestor = 3, false }, VerdictKeep, ReasonUnpushed, ""},
@@ -112,7 +110,7 @@ func TestDecideTree(t *testing.T) {
 			if b.Name == "" {
 				bp = nil
 			}
-			d := DecideTree(tf, bp, Options{})
+			d := DecideTree(tf, bp)
 			if d.Verdict != tt.verdict || d.Reason != tt.reason || !strings.Contains(d.Detail, tt.detail) {
 				t.Errorf("got %s %s %q, want %s %s containing %q", d.Verdict, d.Reason, d.Detail, tt.verdict, tt.reason, tt.detail)
 			}

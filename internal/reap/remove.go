@@ -3,17 +3,15 @@ package reap
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/marekabaffy/gh-reap/internal/conn"
 )
 
 // Outcomes of one removal.
 const (
-	Removed     = "removed"
-	WouldRemove = "would-remove"
-	Failed      = "failed"
-	Refused     = "refused"
+	Removed = "removed"
+	Failed  = "failed"
+	Refused = "refused"
 )
 
 // Reason codes of a failed or refused removal (besides the list's KEEP reasons).
@@ -40,9 +38,11 @@ type Result struct {
 // RemoveOptions choose what Remove acts on.
 type RemoveOptions struct {
 	GatherOptions
-	Refs   []string
-	All    bool // every REMOVE item
-	DryRun bool
+	// Refs names the items to remove; empty means every REMOVE item.
+	Refs []string
+	// Confirm, when set, sees the chosen items before anything is removed; false
+	// cancels the run.
+	Confirm func([]Item) bool
 	// Progress, when set, receives each result as it happens.
 	Progress func(Result)
 }
@@ -50,18 +50,18 @@ type RemoveOptions struct {
 // Report is the outcome of one Remove.
 type Report struct {
 	Root     string   `json:"repo"`
-	DryRun   bool     `json:"dry_run"`
 	Problems []string `json:"problems,omitempty"`
 	Results  []Result `json:"results"`
+	Canceled bool     `json:"-"` // Confirm said no
 }
 
-// OK is true when every chosen item was removed (or would be) and the list was complete.
+// OK is true when every chosen item was removed and the list was complete.
 func (r *Report) OK() bool {
 	if len(r.Problems) > 0 {
 		return false
 	}
 	for _, res := range r.Results {
-		if res.Result != Removed && res.Result != WouldRemove {
+		if res.Result != Removed {
 			return false
 		}
 	}
@@ -72,22 +72,20 @@ func (r *Report) OK() bool {
 // one, checking each again right before it acts. Nothing is forced and nothing is
 // retried another way: a failure leaves the item and is reported.
 func Remove(ctx context.Context, c conn.Conn, dir string, opt RemoveOptions) (*Report, error) {
-	if !opt.DryRun {
-		common, err := c.CommonDir(ctx, dir)
-		if err != nil {
-			return nil, fmt.Errorf("not a git repository: %w", err)
-		}
-		unlock, err := Lock(common)
-		if err != nil {
-			return nil, err
-		}
-		defer unlock()
+	common, err := c.CommonDir(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("not a git repository: %w", err)
 	}
+	unlock, err := Lock(common)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	inv, err := Gather(ctx, c, dir, opt.GatherOptions)
 	if err != nil {
 		return nil, err
 	}
-	rep := &Report{Root: inv.Root, DryRun: opt.DryRun}
+	rep := &Report{Root: inv.Root}
 	if !inv.Complete {
 		rep.Problems = inv.Problems
 	}
@@ -110,14 +108,14 @@ func Remove(ctx context.Context, c conn.Conn, dir string, opt RemoveOptions) (*R
 		it := inv.Find(ref)
 		switch {
 		case it == nil:
-			add(Result{Ref: ref, Result: Refused, Reason: ReasonNotFound, Detail: "no worktree or local branch by that name or path"})
+			add(Result{Ref: ref, Result: Refused, Reason: ReasonNotFound, Detail: "not found"})
 		case it.Verdict != VerdictRemove:
-			add(Result{Ref: it.Ref, Kind: it.Kind, Branch: it.Branch, Path: it.Path, Result: Refused, Reason: it.Reason, Detail: "listed KEEP: " + it.Detail})
+			add(Result{Ref: it.Ref, Kind: it.Kind, Branch: it.Branch, Path: it.Path, Result: Refused, Reason: it.Reason, Detail: it.Detail})
 		default:
 			pick(*it)
 		}
 	}
-	if opt.All {
+	if len(opt.Refs) == 0 {
 		for _, it := range inv.Items {
 			if it.Verdict == VerdictRemove {
 				pick(it)
@@ -136,13 +134,17 @@ func Remove(ctx context.Context, c conn.Conn, dir string, opt RemoveOptions) (*R
 		}
 		return 2
 	}
+	if len(chosen) > 0 && opt.Confirm != nil && !opt.Confirm(chosen) {
+		rep.Canceled = true
+		return rep, nil
+	}
 	for pass := 0; pass < 3; pass++ {
 		for _, it := range chosen {
 			if order(it) != pass {
 				continue
 			}
 			if ctx.Err() != nil {
-				add(result(it, Failed, ReasonCanceled, "interrupted before this item"))
+				add(result(it, Failed, ReasonCanceled, "interrupted"))
 				continue
 			}
 			add(removeOne(ctx, c, inv, it, opt))
@@ -183,34 +185,17 @@ func recheck(ctx context.Context, c conn.Conn, inv *Inventory, it Item, opt Remo
 func removeOne(ctx context.Context, c conn.Conn, inv *Inventory, it Item, opt RemoveOptions) Result {
 	now, reason, why := recheck(ctx, c, inv, it, opt)
 	if now == nil {
-		return result(it, Refused, reason, "changed since the list: "+why)
+		return result(it, Refused, reason, "changed: "+why)
 	}
 	it = *now
 
 	force := it.PR != nil && it.PR.State == "MERGED"
-	if opt.DryRun {
-		var steps []string
-		if it.Kind == KindWorktree {
-			if it.Hook != nil && *it.Hook {
-				steps = append(steps, "run the pre-worktree-remove hook")
-			}
-			steps = append(steps, "git worktree remove")
-		}
-		if it.Branch != "" && it.Reason != ReasonFolderGone {
-			step := "git branch -d " + it.Branch
-			if force {
-				step += " (or delete it at the PR head if git does not see it merged)"
-			}
-			steps = append(steps, step)
-		}
-		return result(it, WouldRemove, it.Reason, strings.Join(steps, ", then "))
-	}
 
 	if it.Kind == KindWorktree {
 		if it.Reason != ReasonFolderGone {
 			if out, err := c.RunHook(ctx, it.Path); err != nil {
 				if ctx.Err() != nil {
-					return result(it, Failed, ReasonCanceled, "interrupted while the hook ran, tree kept")
+					return result(it, Failed, ReasonCanceled, "interrupted")
 				}
 				last := conn.LastLine(out)
 				if conn.OutputHeld(err) {
@@ -219,12 +204,12 @@ func removeOne(ctx context.Context, c conn.Conn, inv *Inventory, it Item, opt Re
 				if last == "" {
 					last = err.Error()
 				}
-				return result(it, Failed, ReasonHookFailed, "pre-worktree-remove hook failed, tree kept: "+last)
+				return result(it, Failed, ReasonHookFailed, "teardown hook failed: "+last)
 			}
 			// The hook may have changed the tree: left a process running, made it
 			// dirty, moved or detached its HEAD. Check everything again.
 			if now, reason, why := recheck(ctx, c, inv, it, opt); now == nil {
-				return result(it, Failed, reason, "after the hook: "+why+"; tree kept")
+				return result(it, Failed, reason, "changed by teardown hook: "+why)
 			}
 		}
 		if out, err := c.RemoveWorktree(ctx, inv.Root, it.Path); err != nil {

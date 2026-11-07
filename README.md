@@ -13,18 +13,26 @@ lost, and never forces a removal.
 
 ```
 $ gh reap
-VERDICT  KIND      SIZE  HOOK  WHAT                REASON
-KEEP     worktree  -     -     main  ~/app         the main checkout
-REMOVE   worktree  12M   yes   login  ~/app-login  PR #41 merged
-KEEP     worktree  -     yes   api  ~/app-api      PR #44 is open
-KEEP     worktree  -     yes   spike  ~/app-spike  2 uncommitted or untracked files
-REMOVE   branch    -     -     typo                PR #39 merged
+To remove:
+  login  PR #41 merged  worktree and branch, 12M, teardown hook
+  typo   PR #39 merged  branch
 
-$ gh reap remove --all
-removed      login ~/app-login: worktree and branch removed
-removed      typo: branch deleted
+Blocked:
+  spike  PR #40 merged  2 uncommitted files
 
-2 removed, 0 failed, 0 refused.
+Not shown: 1 open PR, 3 without a PR (gh reap --all)
+Remove with: gh reap remove
+
+$ gh reap remove
+To remove:
+  login  worktree and branch, teardown hook
+  typo   branch
+
+Remove 1 worktree and 2 branches? [y/N] y
+removed  login
+removed  typo
+
+2 removed.
 ```
 
 ## Install
@@ -44,34 +52,36 @@ You also need:
 
 | Command | What it does |
 |---|---|
-| `gh reap` | List worktrees and branches, each marked REMOVE or KEEP with a reason |
-| `gh reap remove --all` | Remove everything marked REMOVE |
-| `gh reap remove <name>` | Remove only the branches or worktree paths you name |
+| `gh reap` | Show what can be removed, and what is blocked and why |
+| `gh reap --all` | Also show open PRs, branches without a PR, and kept branches |
+| `gh reap remove` | Remove everything under "To remove", after you confirm |
+| `gh reap remove <name>...` | Remove only these branches or worktree paths |
 | `gh reap keep <branch>` | Never remove this branch (`unkeep` undoes it) |
 
 | Option | What it does |
 |---|---|
-| `--dry-run` | Show what `remove` would do, change nothing |
-| `--state closed` | Also count pull requests closed without merging |
-| `--repos <dir>` | List every repository in a folder |
+| `--yes` | `remove` without asking; needed without a terminal |
 | `--json` | Print JSON, described in [docs/reference.md](docs/reference.md) |
 | `--debug` | Print each command gh reap runs |
 
+A blocked item goes once you fix what it shows: commit or push the work, or close what
+runs inside it. To throw the work away instead, use git (`git worktree remove --force`,
+`git branch -D`).
+
 ### Many repositories
 
-`gh reap --repos <dir>` lists every repository in a folder. `remove` works in one
-repository at a time, so run it in each, for example with a shell loop:
+Run `gh reap` in a folder of repositories to list each one. `remove` works in one
+repository at a time, so run it in each:
 
 ```sh
-for d in ~/src/*/; do (cd "$d" && gh reap remove --all --dry-run); done
+for d in ~/src/*/; do (cd "$d" && gh reap remove); done
 ```
 
-or, with [myrepos](https://myrepos.branchable.com/), `mr run gh reap remove --all --dry-run`.
-Drop `--dry-run` to remove.
+or, with [myrepos](https://myrepos.branchable.com/), `mr run gh reap remove`.
 
 ## How it decides
 
-An item is **REMOVE** only when all of these hold:
+An item is removed only when all of these hold:
 
 - ✅ Its pull request, from this repository or one of your remotes, is merged.
 - ✅ Every local commit is in that pull request or on a remote.
@@ -79,7 +89,7 @@ An item is **REMOVE** only when all of these hold:
   running inside it.
 - ✅ It is not the main checkout, the default branch, or marked keep.
 
-If anything cannot be checked (GitHub is down, `lsof` fails), the item is KEEP.
+If anything cannot be checked (GitHub is down, `lsof` fails), nothing is removed.
 
 When you run `remove`, gh reap:
 

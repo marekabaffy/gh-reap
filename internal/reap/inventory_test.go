@@ -140,7 +140,7 @@ func TestGather_FixtureRepo(t *testing.T) {
 	if merged.SizeKB == nil || *merged.SizeKB != 48 || merged.Hook == nil || !*merged.Hook || merged.PR.Number != 1 || merged.OID != oid["merged"] {
 		t.Errorf("merged: %+v", merged)
 	}
-	if dirty := inv.Find("worktree:" + R + "/wt-dirty"); dirty.Hook == nil || *dirty.Hook || dirty.Detail != "3 uncommitted or untracked files" {
+	if dirty := inv.Find("worktree:" + R + "/wt-dirty"); dirty.Hook == nil || *dirty.Hook || dirty.Detail != "3 uncommitted files" {
 		t.Errorf("dirty: %+v", dirty)
 	}
 	if inv.Items[0].Ref != "worktree:"+R+"/repo" || inv.Items[len(inv.Items)-1].Kind != KindBranch {
@@ -165,13 +165,6 @@ func TestGather_FixtureRepo(t *testing.T) {
 	if n != 1 {
 		t.Errorf("PullRequests called %d times", n)
 	}
-}
-
-func TestGather_ClosedState(t *testing.T) {
-	inv := gather(t, world(t), GatherOptions{Options: Options{IncludeClosed: true}})
-	w := everyRule()
-	w["branch:level"] = want{"REMOVE", ReasonPRClosed}
-	check(t, inv, w)
 }
 
 func TestGather_InUse(t *testing.T) {

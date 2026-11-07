@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -242,6 +244,56 @@ func (e *env) run(dir string, args ...string) run {
 	return run{code, stdout.String(), stderr.String()}
 }
 
+// inTerminal runs gh reap under a pseudo-terminal (script(1)) and, like a
+// person, types answer once the [y/N] prompt is on screen.
+func (e *env) inTerminal(dir, answer string, args ...string) run {
+	e.t.Helper()
+	command := append([]string{binary}, args...)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		cmd = exec.Command("script", append([]string{"-q", "/dev/null"}, command...)...)
+	} else {
+		cmd = exec.Command("script", "-qec", strings.Join(command, " "), "/dev/null")
+	}
+	cmd.Dir = dir
+	cmd.Env = e.environ()
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		e.t.Fatal(err)
+	}
+	var out strings.Builder
+	buf := make([]byte, 4096)
+	typed := false
+	for {
+		n, rerr := stdout.Read(buf)
+		out.Write(buf[:n])
+		if !typed && strings.Contains(out.String(), "[y/N] ") {
+			_, _ = io.WriteString(stdin, answer)
+			typed = true
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	_ = stdin.Close()
+	err = cmd.Wait()
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	} else if err != nil {
+		e.t.Fatal(err)
+	}
+	return run{code, strings.ReplaceAll(out.String(), "\r\n", "\n"), ""}
+}
+
 type item struct {
 	Kind    string `json:"kind"`
 	Ref     string `json:"ref"`
@@ -271,9 +323,9 @@ type listing struct {
 	} `json:"repos"`
 }
 
-func (e *env) list(dir string, args ...string) (listing, run) {
+func (e *env) list(dir string) (listing, run) {
 	e.t.Helper()
-	r := e.run(dir, append([]string{"list", "--json"}, args...)...)
+	r := e.run(dir, "--json")
 	var l listing
 	if err := json.Unmarshal([]byte(r.stdout), &l); err != nil {
 		e.t.Fatalf("list --json: %v\nstdout: %s\nstderr: %s", err, r.stdout, r.stderr)
@@ -297,7 +349,6 @@ func byName(l listing) map[string]item {
 
 type report struct {
 	Repo     string   `json:"repo"`
-	DryRun   bool     `json:"dry_run"`
 	Problems []string `json:"problems"`
 	Results  []struct {
 		Ref    string `json:"ref"`
@@ -312,7 +363,7 @@ type report struct {
 
 func (e *env) remove(dir string, args ...string) (report, run) {
 	e.t.Helper()
-	r := e.run(dir, append([]string{"remove", "--json"}, args...)...)
+	r := e.run(dir, append([]string{"remove", "--json", "--yes"}, args...)...)
 	var rep report
 	if err := json.Unmarshal([]byte(r.stdout), &rep); err != nil {
 		e.t.Fatalf("remove --json: %v\nstdout: %s\nstderr: %s", err, r.stdout, r.stderr)
@@ -457,10 +508,6 @@ func TestE2E_ListEveryRule(t *testing.T) {
 		t.Errorf("ref: %q", it.Ref)
 	}
 
-	// --state closed takes a closed PR too.
-	l, _ = e.list(e.main, "--state", "closed")
-	expect(t, byName(l)["closed"], "REMOVE", "pr-closed")
-
 	// The same list from inside a worktree.
 	l, _ = e.list(filepath.Join(e.root, "wt-open"))
 	if got := byName(l)["merged"]; got.Verdict != "REMOVE" || l.Repos[0].Path != e.main {
@@ -470,12 +517,15 @@ func TestE2E_ListEveryRule(t *testing.T) {
 	// but gh reap itself, which does not count), so it is judged on its PR alone.
 	expect(t, byName(l)["open"], "KEEP", "pr-open")
 
-	// The table names every item.
+	// The text list: what can go first, the rest counted; --all lists the rest.
 	r = e.run(e.main)
-	for _, want := range []string{"VERDICT", "REMOVE", "merged", "squashed", "PR #3 is open", "to remove"} {
+	for _, want := range []string{"To remove:", "merged", "squashed", "Not shown:", "Remove with: gh reap remove"} {
 		if !strings.Contains(r.stdout, want) {
-			t.Errorf("table lacks %q:\n%s", want, r.stdout)
+			t.Errorf("list lacks %q:\n%s", want, r.stdout)
 		}
+	}
+	if r = e.run(e.main, "--all"); !strings.Contains(r.stdout, "PR #3 open") {
+		t.Errorf("--all lacks the open PR:\n%s", r.stdout)
 	}
 }
 
@@ -494,21 +544,9 @@ func TestE2E_RemoveAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Dry run changes nothing.
-	rep, r := e.remove(e.main, "--all", "--dry-run")
-	if r.code != 0 || !rep.DryRun || len(rep.Results) != 3 {
-		t.Fatalf("dry run: exit %d, %+v, %s", r.code, rep, r.stderr)
-	}
-	if !e.exists(mergedPath) || !e.hasBranch("squashed") {
-		t.Fatal("dry run removed something")
-	}
-	if !strings.Contains(r.stdout, "delete it at the PR head if git does not see it merged") {
-		t.Errorf("dry run should say a squash merge needs -D: %s", r.stdout)
-	}
-
-	rep, r = e.remove(e.main, "--all")
+	rep, r := e.remove(e.main)
 	if r.code != 0 {
-		t.Fatalf("remove --all exit %d: %+v %s", r.code, rep, r.stderr)
+		t.Fatalf("remove exit %d: %+v %s", r.code, rep, r.stderr)
 	}
 	for _, res := range rep.Results {
 		if res.Result != "removed" {
@@ -526,16 +564,6 @@ func TestE2E_RemoveAll(t *testing.T) {
 	}
 	if e.exists(filepath.Join(e.main, ".git", "gh-reap.lock")) {
 		t.Error("lock left behind")
-	}
-
-	// --state closed takes the closed branch; it is not merged in git, and -D is
-	// only for merged PRs, so git refuses and the branch stays.
-	rep, r = e.remove(e.main, "--all", "--state", "closed")
-	if r.code != 1 || len(rep.Results) != 1 || rep.Results[0].Result != "failed" || rep.Results[0].Reason != "branch-delete-failed" {
-		t.Fatalf("closed: exit %d %+v", r.code, rep)
-	}
-	if !e.hasBranch("closed") {
-		t.Error("closed branch deleted with -D")
 	}
 }
 
@@ -584,7 +612,7 @@ func TestE2E_RevalidatesBeforeActing(t *testing.T) {
 	// The hook makes the tree dirty: the check after the hook keeps it.
 	e.hook("echo late > \"$1/late.txt\"\n")
 	rep, r := e.remove(e.main, "moving")
-	if r.code != 1 || rep.Results[0].Reason != "dirty" || !strings.Contains(rep.Results[0].Detail, "after the hook") || !e.exists(path) {
+	if r.code != 1 || rep.Results[0].Reason != "dirty" || !strings.Contains(rep.Results[0].Detail, "changed by teardown hook") || !e.exists(path) {
 		t.Fatalf("got exit %d %+v", r.code, rep)
 	}
 	// Now the tree is dirty: the fresh list refuses before anything runs.
@@ -609,7 +637,7 @@ case "$1" in *fails) echo "first line"; echo "database still attached" >&2; exit
 	if h := byName(l)["ok"].Hook; h == nil || !*h {
 		t.Errorf("hook should show yes: %+v", byName(l)["ok"])
 	}
-	rep, r := e.remove(e.main, "--all")
+	rep, r := e.remove(e.main)
 	if r.code != 1 {
 		t.Errorf("exit %d, want 1 (one hook failed)", r.code)
 	}
@@ -680,7 +708,7 @@ func TestE2E_WorktreeInsideAnother(t *testing.T) {
 	}
 	l, _ := e.list(e.main)
 	expect(t, byName(l)["outer"], "KEEP", "contains-worktree")
-	e.remove(e.main, "--all")
+	e.remove(e.main)
 	if !e.exists(outer) || !e.exists(wip) {
 		t.Error("removing the outer tree took the inner one")
 	}
@@ -724,11 +752,36 @@ func TestE2E_ForkPRWithTheSameBranchName(t *testing.T) {
 	expect(t, byName(l)["patch-1"], "REMOVE", "pr-merged")
 }
 
+func TestE2E_RemoveAsks(t *testing.T) {
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("no script(1) to give gh reap a terminal")
+	}
+	e := newEnv(t)
+	path, tip := e.worktree("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+
+	r := e.inTerminal(e.main, "n\n", "remove")
+	if r.code != 0 || !strings.Contains(r.stdout, "Remove 1 worktree and 1 branch? [y/N]") || !strings.Contains(r.stdout, "Canceled.") {
+		t.Errorf("declined: exit %d\n%q", r.code, r.stdout)
+	}
+	if !e.exists(path) || !e.hasBranch("done") {
+		t.Fatal("declined, but removed")
+	}
+
+	r = e.inTerminal(e.main, "y\n", "remove")
+	if r.code != 0 || !strings.Contains(r.stdout, "removed  done") || !strings.Contains(r.stdout, "1 removed.") {
+		t.Errorf("accepted: exit %d\n%q", r.code, r.stdout)
+	}
+	if e.exists(path) || e.hasBranch("done") {
+		t.Error("accepted, but still there")
+	}
+}
+
 func TestE2E_KeepAndUnkeep(t *testing.T) {
 	e := newEnv(t)
 	path, tip := e.worktree("precious")
 	e.gh.set("precious", pr{1, "MERGED", tip, ""})
-	if r := e.run(e.main, "keep", "precious"); r.code != 0 || !strings.Contains(r.stdout, "kept") {
+	if r := e.run(e.main, "keep", "precious"); r.code != 0 || !strings.Contains(r.stdout, "marked keep") {
 		t.Fatalf("keep: %+v", r)
 	}
 	if v := e.git(e.main, "config", "branch.precious.reap-keep"); v != "true" {
@@ -736,7 +789,7 @@ func TestE2E_KeepAndUnkeep(t *testing.T) {
 	}
 	l, _ := e.list(e.main)
 	expect(t, byName(l)["precious"], "KEEP", "marked-keep")
-	rep, r := e.remove(e.main, "--all")
+	rep, r := e.remove(e.main)
 	if r.code != 0 || len(rep.Results) != 0 || !e.exists(path) {
 		t.Errorf("remove --all touched a kept tree: %+v", rep)
 	}
@@ -762,7 +815,7 @@ func TestE2E_Lock(t *testing.T) {
 	if err := os.WriteFile(lock, []byte("pid=999999\nhost=elsewhere\nstarted=then\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := e.run(e.main, "remove", "--all")
+	r := e.run(e.main, "remove", "--yes")
 	if r.code != 1 || !strings.Contains(r.stderr, "another gh reap run holds the lock") || !strings.Contains(r.stderr, lock) {
 		t.Errorf("locked: %+v", r)
 	}
@@ -770,14 +823,14 @@ func TestE2E_Lock(t *testing.T) {
 		t.Error("removed while locked")
 	}
 	// From a worktree, the lock is the same one.
-	r = e.run(filepath.Join(e.root, "wt-a"), "remove", "--all")
+	r = e.run(filepath.Join(e.root, "wt-a"), "remove", "--yes")
 	if r.code != 1 || !strings.Contains(r.stderr, lock) {
 		t.Errorf("locked from a worktree: %+v", r)
 	}
 	// A dead process on this host: the message says the lock is stale.
 	host, _ := os.Hostname()
 	_ = os.WriteFile(lock, []byte("pid=999999\nhost="+host+"\nstarted=then\n"), 0o644)
-	if r = e.run(e.main, "remove", "--all"); !strings.Contains(r.stderr, "stale") {
+	if r = e.run(e.main, "remove", "--yes"); !strings.Contains(r.stderr, "stale") {
 		t.Errorf("stale lock: %s", r.stderr)
 	}
 	// list never takes the lock.
@@ -794,7 +847,7 @@ func TestE2E_ConcurrentRunsRefused(t *testing.T) {
 	release := filepath.Join(e.root, "release")
 	e.hook("touch " + started + "\nwhile [ ! -e " + release + " ]; do sleep 0.05; done\n")
 
-	first := exec.Command(binary, "remove", "--all")
+	first := exec.Command(binary, "remove", "--yes")
 	first.Dir = e.main
 	first.Env = e.environ()
 	var out strings.Builder
@@ -809,7 +862,7 @@ func TestE2E_ConcurrentRunsRefused(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	second := e.run(e.main, "remove", "--all")
+	second := e.run(e.main, "remove", "--yes")
 	_ = os.WriteFile(release, nil, 0o644)
 	err := first.Wait()
 	if second.code != 1 || !strings.Contains(second.stderr, "another gh reap run holds the lock") {
@@ -851,7 +904,7 @@ func TestE2E_IncompleteInventory(t *testing.T) {
 			}
 		}
 		expect(t, byName(l)["b"], "KEEP", "inventory-incomplete")
-		rep, r := e.remove(e.main, "--all")
+		rep, r := e.remove(e.main)
 		if r.code != 1 || len(rep.Results) != 0 || !e.hasBranch("b") {
 			t.Errorf("remove without lsof: exit %d %+v", r.code, rep)
 		}
@@ -925,28 +978,24 @@ func TestE2E_FolderOfRepos(t *testing.T) {
 	}
 	expect(t, byName(l)["a"], "REMOVE", "pr-merged")
 
-	l, _ = e.list(e.root, "--repos", e.root)
-	if len(l.Repos) != 3 {
-		t.Errorf("--repos: %d repos", len(l.Repos))
-	}
 	// remove runs in one repository only.
-	if r := e.run(e.root, "remove", "--all"); r.code != 1 {
+	if r := e.run(e.root, "remove", "--yes"); r.code != 1 {
 		t.Errorf("remove outside a repo: %+v", r)
 	}
-	if r := e.run(e.root); !strings.Contains(r.stdout, "== ") {
-		t.Errorf("table should head each repo: %s", r.stdout)
+	if r := e.run(e.root); !strings.Contains(r.stdout, "widgets (acme/widgets)") {
+		t.Errorf("each repo should have a heading: %s", r.stdout)
 	}
 }
 
 func TestE2E_Usage(t *testing.T) {
 	e := newEnv(t)
-	for _, args := range [][]string{{"bogus"}, {"remove"}, {"list", "--state", "open"}, {"list", "--nope"}, {"keep"}, {"list", "x"}} {
+	for _, args := range [][]string{{"bogus"}, {"remove"}, {"list"}, {"--state", "closed"}, {"--nope"}, {"keep"}, {"x"}, {"remove", "--all"}} {
 		if r := e.run(e.main, args...); r.code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, r.code)
 		}
 	}
 	r := e.run(e.main, "--help")
-	if r.code != 0 || !strings.Contains(r.stdout, "gh reap remove --all") {
+	if r.code != 0 || !strings.Contains(r.stdout, "gh reap remove [<name>...]") {
 		t.Errorf("help: %+v", r)
 	}
 }

@@ -60,7 +60,7 @@ func outcomes(rep *Report) map[string]string {
 
 func TestRemove_All(t *testing.T) {
 	f := removable(t)
-	rep := remove(t, f, RemoveOptions{All: true})
+	rep := remove(t, f, RemoveOptions{})
 	want := map[string]string{
 		"worktree:" + R + "/wt-gone":   "removed folder-gone",
 		"worktree:" + R + "/wt-merged": "removed pr-merged",
@@ -90,19 +90,24 @@ func TestRemove_All(t *testing.T) {
 	}
 }
 
-func TestRemove_DryRunChangesNothing(t *testing.T) {
-	f := world(t) // no lock dir, no removal answers: any mutation would fail
-	rep := remove(t, f, RemoveOptions{All: true, DryRun: true})
-	if len(mutations(f)) != 0 || !rep.DryRun || !rep.OK() || len(rep.Results) != 3 {
-		t.Fatalf("mutations %v, report %+v", mutations(f), rep)
+func TestRemove_Confirm(t *testing.T) {
+	// Declining: Confirm sees every chosen item, and nothing is touched.
+	f := removable(t)
+	var seen []string
+	rep := remove(t, f, RemoveOptions{Confirm: func(items []Item) bool {
+		for _, it := range items {
+			seen = append(seen, it.Ref)
+		}
+		return false
+	}})
+	if !rep.Canceled || len(rep.Results) != 0 || len(mutations(f)) != 0 || len(seen) != 3 {
+		t.Errorf("declined: seen %v, report %+v, calls %v", seen, rep, mutations(f))
 	}
-	for _, r := range rep.Results {
-		if r.Result != WouldRemove {
-			t.Errorf("%s: %s", r.Ref, r.Result)
-		}
-		if r.Ref == "worktree:"+R+"/wt-merged" && r.Detail != "run the pre-worktree-remove hook, then git worktree remove, then git branch -d merged (or delete it at the PR head if git does not see it merged)" {
-			t.Errorf("plan: %q", r.Detail)
-		}
+	// Accepting: everything chosen is removed.
+	f = removable(t)
+	rep = remove(t, f, RemoveOptions{Confirm: func([]Item) bool { return true }})
+	if rep.Canceled || !rep.OK() || len(rep.Results) != 3 {
+		t.Errorf("accepted: %+v", rep)
 	}
 }
 
@@ -130,7 +135,6 @@ func TestRemove_Failures(t *testing.T) {
 		name    string
 		edit    func(*conntest.Fake)
 		ref     string
-		opt     Options
 		outcome string
 		detail  string
 		calls   []string
@@ -170,14 +174,6 @@ func TestRemove_Failures(t *testing.T) {
 			calls: []string{"DeleteBranch -d squashed", "DeleteBranchAt squashed " + oid["squashed"]},
 		},
 		{
-			name: "closed PR: never past git branch -d",
-			edit: func(f *conntest.Fake) {
-				f.Answers["DeleteBranch -d level"] = conntest.Answer{Out: "error: the branch 'level' is not fully merged\n", Err: errors.New("exit status 1")}
-			},
-			ref: "level", opt: Options{IncludeClosed: true}, outcome: "failed branch-delete-failed",
-			calls: []string{"DeleteBranch -d level"},
-		},
-		{
 			name: "tree removed but branch delete fails: said so",
 			edit: func(f *conntest.Fake) {
 				f.Answers["DeleteBranch -d merged"] = conntest.Answer{Out: "error: the branch 'merged' is not fully merged\n", Err: errors.New("exit status 1")}
@@ -199,7 +195,7 @@ func TestRemove_Failures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := removable(t)
 			tt.edit(f)
-			rep := remove(t, f, RemoveOptions{Refs: []string{tt.ref}, GatherOptions: GatherOptions{Options: tt.opt}})
+			rep := remove(t, f, RemoveOptions{Refs: []string{tt.ref}})
 			r := rep.Results[0]
 			if got := r.Result + " " + r.Reason; got != tt.outcome || !strings.Contains(r.Detail, tt.detail) {
 				t.Errorf("got %s %q, want %s containing %q", got, r.Detail, tt.outcome, tt.detail)
@@ -281,11 +277,11 @@ func TestRemove_HookChangesTheTree(t *testing.T) {
 		{"detaches HEAD (and may commit there)", func(f *conntest.Fake) {
 			f.Set("WorktreeList "+R+"/repo", strings.Replace(conntest.Fixture(t, "worktree_list.bin"),
 				"branch refs/heads/merged\x00", "detached\x00", 1))
-		}, "failed detached", "after the hook"},
+		}, "failed detached", "changed by teardown hook"},
 		{"commits on the branch", func(f *conntest.Fake) {
 			moved := strings.Repeat("5", 40)
 			f.Set("Branches "+R+"/repo", strings.Replace(conntest.Fixture(t, "branches.txt"), oid["merged"], moved, 1))
-		}, "failed", "after the hook"},
+		}, "failed", "changed by teardown hook"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -328,7 +324,7 @@ func TestRemove_GoneFolderCameBack(t *testing.T) {
 func TestRemove_IncompleteListRemovesNothing(t *testing.T) {
 	f := removable(t)
 	f.PRErr = errors.New("HTTP 502")
-	rep := remove(t, f, RemoveOptions{All: true, Refs: []string{"merged"}})
+	rep := remove(t, f, RemoveOptions{Refs: []string{"merged"}})
 	if rep.OK() || len(rep.Problems) == 0 || len(mutations(f)) != 0 {
 		t.Errorf("report %+v, calls %v", rep, mutations(f))
 	}
@@ -344,17 +340,13 @@ func TestRemove_Lock(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Calls = nil
-	_, err := Remove(context.Background(), f, ".", RemoveOptions{All: true})
+	_, err := Remove(context.Background(), f, ".", RemoveOptions{})
 	if !errors.Is(err, ErrLocked) || len(mutations(f)) != 0 {
 		t.Errorf("got %v, calls %v", err, f.Calls)
 	}
-	// A dry run changes nothing, so it does not need the lock.
-	if _, err := Remove(context.Background(), f, ".", RemoveOptions{All: true, DryRun: true}); err != nil {
-		t.Errorf("dry run while locked: %v", err)
-	}
 	// The lock is released after a run.
 	_ = os.Remove(filepath.Join(dir, LockName))
-	remove(t, f, RemoveOptions{All: true})
+	remove(t, f, RemoveOptions{})
 	if _, err := os.Stat(filepath.Join(dir, LockName)); !os.IsNotExist(err) {
 		t.Error("lock not released")
 	}
@@ -368,7 +360,7 @@ func TestRemove_Canceled(t *testing.T) {
 			cancel()
 		}
 	}
-	rep, err := Remove(ctx, f, ".", RemoveOptions{All: true, GatherOptions: GatherOptions{workers: 1}})
+	rep, err := Remove(ctx, f, ".", RemoveOptions{GatherOptions: GatherOptions{workers: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +388,7 @@ func TestRemove_CanceledDuringHook(t *testing.T) {
 }
 
 func TestReportOK(t *testing.T) {
-	ok := &Report{Results: []Result{{Result: Removed}, {Result: WouldRemove}}}
+	ok := &Report{Results: []Result{{Result: Removed}, {Result: Removed}}}
 	if !ok.OK() || (&Report{Problems: []string{"x"}}).OK() || (&Report{Results: []Result{{Result: Failed}}}).OK() {
 		t.Error("OK")
 	}
