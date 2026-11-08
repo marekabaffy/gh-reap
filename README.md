@@ -18,30 +18,7 @@ Plain git cannot tell which branches are done, because a squash or rebase merge 
 them looking unmerged. gh reap asks GitHub instead, checks that nothing local would be
 lost, and never forces a removal.
 
-```
-$ gh reap
-To remove:
-  login  PR #41 merged  worktree and branch, 12M, teardown hook
-  typo   PR #39 merged  branch
-
-Blocked:
-  spike  PR #40 merged  2 uncommitted files
-
-Not shown: 1 open PR, 3 without a PR (gh reap --all)
-Remove with: gh reap remove
-
-$ gh reap remove
-To remove:
-  login  worktree and branch, teardown hook
-  typo   branch
-
-Remove 1 worktree and 2 branches? [y/N] y
-✓ Removed worktree ~/src/widgets-login
-✓ Deleted local branch login
-✓ Deleted local branch typo
-
-2 removed.
-```
+<img src="docs/assets/demo.gif" width="720" alt="A terminal recording. gh reap lists two merged items to remove and one blocked by uncommitted files. gh reap remove then asks, removes the worktree and deletes both branches.">
 
 ## Install
 
@@ -49,12 +26,15 @@ Remove 1 worktree and 2 branches? [y/N] y
 gh extension install marekabaffy/gh-reap
 ```
 
-You also need:
+Update it later with `gh extension upgrade reap`.
+
+gh reap runs on macOS and Linux. Windows is not supported, because gh reap uses `lsof` to
+see what is running inside a worktree. You also need:
 
 - `gh`, signed in (`gh auth login`)
 - `lsof`
-- git with config-based hooks (tested with 2.56). An older git still removes branches,
-  but keeps worktrees.
+- git 2.54 or newer, for teardown hooks. An older git still removes branches, but keeps
+  worktrees.
 
 ## Usage
 

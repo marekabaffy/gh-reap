@@ -44,5 +44,5 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 ## Releases
 
-Push a tag `vX.Y.Z`; the release workflow builds every platform with
+Push a tag `vX.Y.Z`; the release workflow builds with `script/build.sh` and publishes with
 `cli/gh-extension-precompile`.
