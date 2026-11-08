@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/marekabaffy/gh-reap/internal/conn"
 	"github.com/marekabaffy/gh-reap/internal/reap"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 )
 
@@ -30,6 +30,10 @@ const (
 )
 
 const usage = `Remove the worktrees and local branches of merged pull requests, safely.
+
+A branch goes only when its pull request merged and nothing on it is missing from
+the PR or a remote; a worktree, also only when it is clean, unlocked and unused.
+Its pre-worktree-remove git hook runs first.
 
 USAGE
   gh reap [--all]              Show what can be removed, and what is blocked
@@ -58,10 +62,6 @@ EXAMPLES
   # Remove from a script
   $ gh reap remove --yes --json
 
-A branch goes only when its pull request merged and nothing on it is missing from
-the PR or a remote; a worktree, also only when it is clean, unlocked and unused.
-Its pre-worktree-remove git hook runs first.
-
 EXIT STATUS
   0  success
   1  an item failed or was refused, the checks were incomplete, or another run holds the lock
@@ -88,15 +88,14 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		cmd, args = args[0], args[1:]
 	}
 	if cmd == "help" {
-		fmt.Fprint(stdout, usage)
+		printHelp(stdout)
 		return ExitOK
 	}
 	var f flags
-	fs := flag.NewFlagSet("gh reap", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("gh reap", pflag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&f.debug, "debug", false, "")
-	fs.BoolVar(&f.help, "help", false, "")
-	fs.BoolVar(&f.help, "h", false, "")
+	fs.BoolVarP(&f.help, "help", "h", false, "")
 	switch cmd {
 	case "":
 		fs.BoolVar(&f.all, "all", false, "")
@@ -108,12 +107,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	default:
 		return usageError(stderr, "unknown command %q", cmd)
 	}
-	pos, err := parseInterspersed(fs, args)
-	if err != nil {
+	if err := fs.Parse(args); err != nil {
 		return usageError(stderr, "%v", err)
 	}
+	pos := fs.Args()
 	if f.help {
-		fmt.Fprint(stdout, usage)
+		printHelp(stdout)
 		return ExitOK
 	}
 
@@ -164,29 +163,6 @@ func usageError(stderr io.Writer, format string, a ...any) int {
 	fmt.Fprintf(stderr, "gh reap: "+format+"\n", a...)
 	fmt.Fprintln(stderr, "Run 'gh reap --help' for usage.")
 	return ExitUsage
-}
-
-// parseInterspersed lets flags follow positional arguments, as gh's own commands
-// do. Everything after "--" is positional.
-func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
-	var rest []string
-	for i, a := range args {
-		if a == "--" {
-			args, rest = args[:i], args[i+1:]
-			break
-		}
-	}
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		args = fs.Args()
-		if len(args) == 0 {
-			return append(pos, rest...), nil
-		}
-		pos, args = append(pos, args[0]), args[1:]
-	}
 }
 
 func gatherOptions() (reap.GatherOptions, error) {

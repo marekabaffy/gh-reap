@@ -768,7 +768,7 @@ func TestE2E_RemoveAsks(t *testing.T) {
 	e.gh.set("done", pr{1, "MERGED", tip, ""})
 
 	r := e.inTerminal(e.main, "n\n", "remove")
-	if !strings.Contains(r.stdout, "\x1b[1;35mTo remove:\x1b[0m") {
+	if !strings.Contains(r.stdout, "\x1b[1mTo remove:\x1b[0m") {
 		t.Errorf("a terminal gets color:\n%q", r.stdout)
 	}
 	shown := ansiCode.ReplaceAllString(r.stdout, "")
@@ -781,11 +781,29 @@ func TestE2E_RemoveAsks(t *testing.T) {
 
 	r = e.inTerminal(e.main, "y\n", "remove")
 	shown = ansiCode.ReplaceAllString(r.stdout, "")
-	if r.code != 0 || !strings.Contains(shown, "removed  done") || !strings.Contains(shown, "1 removed.") {
+	if r.code != 0 || !strings.Contains(shown, "✓ Removed worktree") || !strings.Contains(shown, "✓ Deleted local branch done") || !strings.Contains(shown, "1 removed.") {
 		t.Errorf("accepted: exit %d\n%q", r.code, r.stdout)
 	}
 	if e.exists(path) || e.hasBranch("done") {
 		t.Error("accepted, but still there")
+	}
+}
+
+func TestE2E_FlagsAfterNames(t *testing.T) {
+	e := newEnv(t)
+	tip := e.branch("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+
+	// Flags may follow names, as in gh's own commands.
+	if r := e.run(e.main, "remove", "done", "--yes", "--json"); r.code != 0 || !strings.Contains(r.stdout, `"result": "removed"`) {
+		t.Errorf("flags after a name: %+v", r)
+	}
+	if e.hasBranch("done") {
+		t.Error("still there")
+	}
+	// After "--", what looks like a flag is a name.
+	if r := e.run(e.main, "keep", "--", "--help"); r.code != 1 || !strings.Contains(r.stderr, `no local branch "--help"`) {
+		t.Errorf("after --: %+v", r)
 	}
 }
 
@@ -801,7 +819,7 @@ func TestE2E_Color(t *testing.T) {
 		t.Errorf("piped output is plain: %q", piped.stdout)
 	}
 	forced := e.runEnv(e.main, []string{"CLICOLOR_FORCE=1"})
-	if !strings.Contains(forced.stdout, "\x1b[1;35mTo remove:\x1b[0m") {
+	if !strings.Contains(forced.stdout, "\x1b[1mTo remove:\x1b[0m") {
 		t.Errorf("CLICOLOR_FORCE colors a pipe: %q", forced.stdout)
 	}
 	if got := ansiCode.ReplaceAllString(forced.stdout, ""); got != piped.stdout {

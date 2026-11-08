@@ -3,10 +3,8 @@ package cli
 import (
 	"bufio"
 	"bytes"
-	"flag"
 	"io"
 	"os"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -68,6 +66,7 @@ func TestColor_OnlyAddsEscapes(t *testing.T) {
 		printResult(&out, reap.Result{Branch: "b", Result: reap.Removed})
 		printResult(&out, reap.Result{Branch: "h", Result: reap.Failed, Detail: "boom"})
 		printSummary(&out, io.Discard, &reap.Report{Results: []reap.Result{{Result: reap.Removed}, {Result: reap.Failed}}})
+		printHelp(&out)
 		return out.String()
 	}
 	plain := render(yes)
@@ -91,14 +90,59 @@ func TestColor_Styles(t *testing.T) {
 	var out bytes.Buffer
 	printInventory(&out, inventory(), false, false)
 	for _, want := range []string{
-		"\x1b[1;35mTo remove:\x1b[0m\n",
-		"  \x1b[1mlogin\x1b[0m  \x1b[35mPR #1 merged\x1b[0m  \x1b[2mworktree and branch, 2.0M, teardown hook\x1b[0m\n",
-		"\x1b[1;31mBlocked:\x1b[0m\n",
-		"  \x1b[1mspike\x1b[0m  \x1b[35mPR #3 merged\x1b[0m  \x1b[31m3 uncommitted files\x1b[0m\n",
+		"\x1b[1mTo remove:\x1b[0m\n",
+		"  \x1b[36mlogin\x1b[0m  \x1b[35mPR #1 merged\x1b[0m  \x1b[2mworktree and branch, 2.0M, teardown hook\x1b[0m\n",
+		"\x1b[1mBlocked:\x1b[0m\n",
+		"  \x1b[36mspike\x1b[0m  \x1b[35mPR #3 merged\x1b[0m  \x1b[33m3 uncommitted files\x1b[0m\n",
 		"\x1b[2mRemove with:\x1b[0m \x1b[1mgh reap remove\x1b[0m\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%q", want, out.String())
+		}
+	}
+
+	out.Reset()
+	printInventory(&out, &reap.Inventory{Warnings: []string{"careful"}, Complete: true}, false, false)
+	if want := "\x1b[33m!\x1b[0m careful\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("warning lacks %q: %q", want, out.String())
+	}
+
+	out.Reset()
+	printResult(&out, reap.Result{Kind: reap.KindWorktree, Branch: "b", Path: "/w/b", Result: reap.Removed})
+	printResult(&out, reap.Result{Branch: "c", Result: reap.Failed, Detail: "boom"})
+	want := "\x1b[32m✓\x1b[0m Removed worktree /w/b\n\x1b[32m✓\x1b[0m Deleted local branch \x1b[36mb\x1b[0m\n\x1b[31mX\x1b[0m \x1b[36mc\x1b[0m: boom\n"
+	if out.String() != want {
+		t.Errorf("results\n%q\nwant\n%q", out.String(), want)
+	}
+
+	out.Reset()
+	printHelp(&out)
+	for _, want := range []string{"\x1b[1mUSAGE\x1b[0m\n", "\x1b[1mEXIT STATUS\x1b[0m\n", "\x1b[1mLEARN MORE\x1b[0m\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("help lacks %q", want)
+		}
+	}
+}
+
+func TestHelp_ExplainsBeforeUsage(t *testing.T) {
+	if strings.Index(usage, "A branch goes only") > strings.Index(usage, "USAGE") {
+		t.Error("the explanation comes before USAGE")
+	}
+}
+
+// Flag errors read as they do in gh, which also parses with pflag.
+func TestRun_FlagErrors(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--version"}, "gh reap: unknown flag: --version\n"},
+		{[]string{"-all"}, "gh reap: unknown shorthand flag: 'a' in -all\n"},
+		{[]string{"remove", "--all"}, "gh reap: unknown flag: --all\n"},
+	} {
+		var errb bytes.Buffer
+		if code := Run(tt.args, strings.NewReader(""), io.Discard, &errb); code != ExitUsage || !strings.Contains(errb.String(), tt.want) {
+			t.Errorf("%v: exit %d, stderr %q, want %q", tt.args, code, errb.String(), tt.want)
 		}
 	}
 }
@@ -130,23 +174,6 @@ func TestColorEnabled(t *testing.T) {
 				t.Errorf("colorEnabled = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestParseInterspersed(t *testing.T) {
-	fs := flag.NewFlagSet("x", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	dry := fs.Bool("dry-run", false, "")
-	state := fs.String("state", "", "")
-	pos, err := parseInterspersed(fs, []string{"a", "--dry-run", "b", "--state", "closed", "--", "--c"})
-	if err != nil || !*dry || *state != "closed" || !reflect.DeepEqual(pos, []string{"a", "b", "--c"}) {
-		t.Errorf("pos %v dry %v state %q err %v", pos, *dry, *state, err)
-	}
-	// After "--", what looks like a flag is a name.
-	*dry = false
-	pos, err = parseInterspersed(fs, []string{"--", "feature", "--dry-run"})
-	if err != nil || *dry || !reflect.DeepEqual(pos, []string{"feature", "--dry-run"}) {
-		t.Errorf("after --: pos %v dry %v err %v", pos, *dry, err)
 	}
 }
 
@@ -318,17 +345,19 @@ func TestScope(t *testing.T) {
 
 func TestPrintResultAndSummary(t *testing.T) {
 	var out, errb bytes.Buffer
-	printResult(&out, reap.Result{Ref: "branch:b", Branch: "b", Result: reap.Removed, Detail: "branch deleted"})
-	printResult(&out, reap.Result{Ref: "worktree:/w/d", Path: "/w/d", Result: reap.Removed})
+	printResult(&out, reap.Result{Ref: "branch:b", Kind: reap.KindBranch, Branch: "b", Result: reap.Removed, Detail: "branch deleted"})
+	printResult(&out, reap.Result{Ref: "worktree:/w/d", Kind: reap.KindWorktree, Path: "/w/d", Result: reap.Removed})
+	printResult(&out, reap.Result{Ref: "worktree:/w/g", Kind: reap.KindWorktree, Branch: "g", Path: "/w/g", Result: reap.Removed, Reason: reap.ReasonFolderGone})
 	printResult(&out, reap.Result{Ref: "worktree:/w/h", Branch: "h", Path: "/w/h", Result: reap.Failed, Detail: "teardown hook failed: boom"})
 	printResult(&out, reap.Result{Ref: "nosuch", Result: reap.Refused, Detail: "not found"})
 	printSummary(&out, &errb, &reap.Report{Problems: []string{"p"}, Results: []reap.Result{{Result: reap.Removed}, {Result: reap.Failed}, {Result: reap.Refused}}})
 	printSummary(&out, &errb, &reap.Report{})
 	printSummary(&out, &errb, &reap.Report{Canceled: true})
-	want := `removed  b
-removed  /w/d
-failed   h: teardown hook failed: boom
-refused  nosuch: not found
+	want := `✓ Deleted local branch b
+✓ Removed worktree /w/d
+✓ Pruned stale worktree metadata for /w/g
+X h: teardown hook failed: boom
+X nosuch: not found
 
 1 removed, 1 failed, 1 refused.
 Nothing to remove.
