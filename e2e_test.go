@@ -987,6 +987,23 @@ func TestE2E_FolderOfRepos(t *testing.T) {
 	}
 }
 
+func TestE2E_SingleChildRepoHint(t *testing.T) {
+	e := newEnv(t)
+	tip := e.branch("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+	parent := filepath.Join(e.root, "parent")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(e.main, filepath.Join(parent, "only-repo")); err != nil {
+		t.Fatal(err)
+	}
+	r := e.run(parent)
+	if r.code != 0 || !strings.Contains(r.stdout, e.main+" (acme/widgets)") || !strings.Contains(r.stdout, "Remove with: cd '"+e.main+"' && gh reap remove") {
+		t.Fatalf("single discovered repo needs its own heading and removal directory: %+v", r)
+	}
+}
+
 func TestE2E_Usage(t *testing.T) {
 	e := newEnv(t)
 	for _, args := range [][]string{{"bogus"}, {"remove"}, {"list"}, {"--state", "closed"}, {"--nope"}, {"keep"}, {"x"}, {"remove", "--all"}} {

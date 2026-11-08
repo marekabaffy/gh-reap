@@ -43,6 +43,7 @@ type Inventory struct {
 	GitHub    string   `json:"github,omitempty"`
 	Complete  bool     `json:"complete"`
 	Problems  []string `json:"problems,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
 	Items     []Item   `json:"items"`
 	CommonDir string   `json:"-"`
 
@@ -244,6 +245,20 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 	}
 	parallel(jobs, opt.workers)
 
+	unsupported, unknown := false, false
+	for i, tf := range tfacts {
+		if i == 0 || tf == nil || tf.Missing {
+			continue
+		}
+		unsupported = unsupported || tf.Hook == conn.HookUnsupported
+		unknown = unknown || tf.Hook == conn.HookUnknown
+	}
+	if unsupported {
+		inv.Warnings = append(inv.Warnings, "git cannot list teardown hooks; worktree removal requires Git with config-based hooks (check which git is on PATH)")
+	}
+	if unknown {
+		inv.Warnings = append(inv.Warnings, "teardown hooks could not be checked for some worktrees; those worktrees cannot be removed")
+	}
 	for i, t := range trees {
 		tf := tfacts[i]
 		if tf == nil {

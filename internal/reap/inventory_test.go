@@ -274,3 +274,34 @@ func TestFind(t *testing.T) {
 		t.Error("found what is not there")
 	}
 }
+
+func TestGather_HookWarningsPreserveDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answer  conntest.Answer
+		warning string
+	}{
+		{"unsupported", conntest.Fail(129, "error: unknown subcommand: `list'"), "git cannot list teardown hooks"},
+		{"failed", conntest.Fail(1, "permission denied"), "teardown hooks could not be checked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := world(t)
+			// The dirty tree retains its primary reason even when hook checks fail.
+			f.Answers["HookList "+R+"/wt-dirty"] = tc.answer
+			f.Answers["HookList "+R+"/wt-merged"] = tc.answer
+			inv := gather(t, f, GatherOptions{})
+			if !inv.Complete || len(inv.Warnings) != 1 || !strings.Contains(inv.Warnings[0], tc.warning) {
+				t.Fatalf("complete=%v warnings=%v", inv.Complete, inv.Warnings)
+			}
+			if it := inv.Find("dirty"); it.Reason != ReasonDirty {
+				t.Errorf("dirty reason changed: %+v", it)
+			}
+			if it := inv.Find("merged"); it.Verdict != VerdictKeep {
+				t.Errorf("unsafe tree: %+v", it)
+			}
+			if it := inv.Find("squashed"); it.Verdict != VerdictRemove {
+				t.Errorf("branch cleanup blocked: %+v", it)
+			}
+		})
+	}
+}

@@ -77,8 +77,14 @@ func rowFor(g int, it reap.Item) row {
 		r.status, r.info = prText(it.PR), it.Detail
 	case gOpen, gClosed:
 		r.status, r.info = prText(it.PR), it.Kind
+		if it.Kind == reap.KindWorktree && it.Reason != reap.ReasonPROpen && it.Reason != reap.ReasonPRClosed {
+			r.info += ", " + it.Detail
+		}
 	case gNoPR, gKeep:
 		r.status = it.Kind
+		if g == gNoPR && it.Kind == reap.KindWorktree && it.Reason != reap.ReasonNoPR {
+			r.info = it.Detail
+		}
 	default:
 		r.status, r.info = it.Kind, it.Detail
 	}
@@ -92,6 +98,9 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 			title += " (" + inv.GitHub + ")"
 		}
 		fmt.Fprintln(w, title)
+	}
+	for _, warning := range inv.Warnings {
+		fmt.Fprintln(w, "! "+warning)
 	}
 	for _, p := range inv.Problems {
 		fmt.Fprintln(w, "! "+p)
@@ -137,7 +146,11 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 		}
 	}
 	if inv.Complete && len(groups[gRemove]) > 0 {
-		footer = append(footer, "Remove with: gh reap remove")
+		command := "gh reap remove"
+		if header {
+			command = "cd " + shellQuote(inv.Root) + " && " + command
+		}
+		footer = append(footer, "Remove with: "+command)
 	}
 	if len(footer) > 0 {
 		if len(sections) > 0 {
@@ -316,4 +329,9 @@ func tilde(p string) string {
 		return "~" + p[len(home):]
 	}
 	return p
+}
+
+// shellQuote keeps paths literal in a POSIX shell, including embedded quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
