@@ -32,7 +32,8 @@
 Repository fields: `path` (the main checkout, or the bare repository), `github`
 (OWNER/REPO, absent when no GitHub remote was found), `complete` (false when `lsof` failed
 or pull requests could not be read; then nothing is REMOVE), `problems` (absent when
-there are none), `items`.
+there are none), `warnings` (optional diagnostics that do not make the inventory
+incomplete, such as unsupported teardown hooks), `items`.
 
 | Item field | Present | Meaning |
 |---|---|---|

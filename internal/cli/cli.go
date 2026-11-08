@@ -210,6 +210,7 @@ func ignoreSelf() func(conn.Process) bool {
 func runList(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, stdout, stderr io.Writer) int {
 	// Outside a repository, list every repository directly under this folder.
 	dirs := []string{"."}
+	discovered := false
 	if _, err := c.CommonDir(ctx, "."); err != nil {
 		found, ferr := reposUnder(ctx, c, ".")
 		if ferr != nil || len(found) == 0 {
@@ -217,6 +218,7 @@ func runList(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, 
 			return ExitFail
 		}
 		dirs = found
+		discovered = true
 	}
 
 	code := ExitOK
@@ -243,7 +245,7 @@ func runList(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, 
 			if i > 0 {
 				fmt.Fprintln(stdout)
 			}
-			printInventory(stdout, inv, len(dirs) > 1, f.all)
+			printInventory(stdout, inv, discovered, f.all)
 		}
 	}
 	return code

@@ -153,7 +153,7 @@ Blocked:
   spike     PR #3 merged  3 uncommitted files
 
 Open PR:
-  wip       PR #4 open    worktree
+  wip       PR #4 open    worktree, 1 uncommitted file
 
 Without a PR:
   idea      branch
@@ -165,7 +165,7 @@ Marked keep:
 Other:
   /w/d      worktree      detached HEAD
 
-Remove with: gh reap remove
+Remove with: cd '/r' && gh reap remove
 `
 	if out.String() != want {
 		t.Errorf("got\n%s\nwant\n%s", out.String(), want)
@@ -254,5 +254,38 @@ Nothing to remove.
 	}
 	if errb.String() != "! p\n" {
 		t.Errorf("problems go to stderr: %q", errb.String())
+	}
+}
+
+func TestPrintInventory_QuotedRoot(t *testing.T) {
+	inv := inventory()
+	inv.Root = "/tmp/repo's $(touch unwanted)"
+	var out bytes.Buffer
+	printInventory(&out, inv, true, false)
+	if !strings.Contains(out.String(), `Remove with: cd '/tmp/repo'"'"'s $(touch unwanted)' && gh reap remove`) {
+		t.Fatalf("unsafe removal hint: %s", out.String())
+	}
+}
+
+func TestRowFor_RetainedWorktrees(t *testing.T) {
+	for _, state := range []string{"", "OPEN", "CLOSED"} {
+		it := reap.Item{Kind: reap.KindWorktree, Verdict: reap.VerdictKeep, Reason: reap.ReasonInUse, Detail: "in use by zsh (pid 42)"}
+		if state != "" {
+			it.PR = &conn.PR{State: state}
+		}
+		r := rowFor(group(it), it)
+		if !strings.Contains(r.info, it.Detail) {
+			t.Errorf("state %q hides reason: %+v", state, r)
+		}
+	}
+}
+
+func TestPrintInventory_Warnings(t *testing.T) {
+	inv := inventory()
+	inv.Warnings = []string{"git cannot list teardown hooks"}
+	var out bytes.Buffer
+	printInventory(&out, inv, false, false)
+	if !strings.Contains(out.String(), "! git cannot list teardown hooks") || !strings.Contains(out.String(), "Remove with:") {
+		t.Fatalf("warning should be visible without hiding branch cleanup: %s", out.String())
 	}
 }
