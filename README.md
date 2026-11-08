@@ -1,4 +1,11 @@
-# gh reap
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
+    <img src="docs/assets/wordmark-light.svg" alt="gh reap" width="220">
+  </picture>
+</h1>
+
+Reap what you merged.
 
 [![CI](https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml/badge.svg)](https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/marekabaffy/gh-reap)](https://github.com/marekabaffy/gh-reap/releases/latest)
@@ -83,11 +90,11 @@ or, with [myrepos](https://myrepos.branchable.com/), `mr run gh reap remove`.
 
 An item is removed only when all of these hold:
 
-- ✅ Its pull request, from this repository or one of your remotes, is merged.
-- ✅ Every local commit is in that pull request or on a remote.
-- ✅ The worktree is clean, unlocked, holds no other worktree, and no process is
+- Its pull request, from this repository or one of your remotes, is merged.
+- Every local commit is in that pull request or on a remote.
+- The worktree is clean, unlocked, holds no other worktree, and no process is
   running inside it.
-- ✅ It is not the main checkout, the default branch, or marked keep.
+- It is not the main checkout, the default branch, or marked keep.
 
 If anything cannot be checked (GitHub is down, `lsof` fails), nothing is removed.
 
