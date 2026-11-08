@@ -1,8 +1,17 @@
-# gh reap
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
+    <img src="docs/assets/wordmark-light.svg" alt="gh reap" width="280">
+  </picture>
+</h1>
 
-[![CI](https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml/badge.svg)](https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/marekabaffy/gh-reap)](https://github.com/marekabaffy/gh-reap/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center"><strong>Reap what you merged.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml"><img src="https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/marekabaffy/gh-reap/releases/latest"><img src="https://img.shields.io/github/v/release/marekabaffy/gh-reap" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 A [GitHub CLI](https://cli.github.com) extension that cleans up the git worktrees and
 local branches of merged pull requests, and keeps everything else.
