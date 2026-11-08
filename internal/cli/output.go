@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	ghterm "github.com/cli/go-gh/v2/pkg/term"
 	"github.com/marekabaffy/gh-reap/internal/conn"
 	"github.com/marekabaffy/gh-reap/internal/reap"
 )
@@ -35,6 +36,53 @@ var groupNames = [nGroups]struct{ title, one, many string }{
 	gKeep:    {"Marked keep", "marked keep", "marked keep"},
 	gLocked:  {"Locked", "locked", "locked"},
 	gOther:   {"Other", "other", "other"},
+}
+
+// ANSI styles, from the 16 colours every terminal theme defines. Purple is
+// GitHub's "merged"; red is what you need to fix.
+const (
+	bold        = "1"
+	dim         = "2"
+	red         = "31"
+	green       = "32"
+	magenta     = "35"
+	boldRed     = "1;31"
+	boldMagenta = "1;35"
+)
+
+type sectionStyle struct{ title, status, info string }
+
+var groupStyles = [nGroups]sectionStyle{
+	gRemove:  {boldMagenta, magenta, dim},
+	gBlocked: {boldRed, magenta, red},
+	gOpen:    {bold, green, dim},
+	gClosed:  {bold, red, dim},
+	gNoPR:    {bold, dim, dim},
+	gKeep:    {bold, dim, dim},
+	gLocked:  {bold, dim, dim},
+	gOther:   {bold, dim, dim},
+}
+
+// color says whether standard output is styled. Run sets it once.
+var color bool
+
+// colorEnabled follows gh: color goes only to a terminal, unless the
+// environment says otherwise (NO_COLOR, CLICOLOR, CLICOLOR_FORCE, GH_FORCE_TTY).
+var colorEnabled = func(stdout io.Writer) bool {
+	return stdout == io.Writer(os.Stdout) && ghterm.FromEnv().IsColorEnabled()
+}
+
+func style(code, s string) string {
+	if !color || s == "" {
+		return s
+	}
+	return "\x1b[" + code + "m" + s + "\x1b[0m"
+}
+
+// padded styles s and fills it to width with plain spaces, so alignment never
+// counts the escape codes.
+func padded(code, s string, width int) string {
+	return style(code, s) + strings.Repeat(" ", width-len([]rune(s)))
 }
 
 // group places an item, or returns -1 for one never worth showing: the main
@@ -97,13 +145,13 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 		if inv.GitHub != "" {
 			title += " (" + inv.GitHub + ")"
 		}
-		fmt.Fprintln(w, title)
+		fmt.Fprintln(w, style(bold, title))
 	}
 	for _, warning := range inv.Warnings {
-		fmt.Fprintln(w, "! "+warning)
+		fmt.Fprintln(w, style(red, "! "+warning))
 	}
 	for _, p := range inv.Problems {
-		fmt.Fprintln(w, "! "+p)
+		fmt.Fprintln(w, style(red, "! "+p))
 	}
 	var groups [nGroups][]row
 	for _, it := range inv.Items {
@@ -118,7 +166,7 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 	var sections []section
 	for _, g := range shown {
 		if len(groups[g]) > 0 {
-			sections = append(sections, section{groupNames[g].title, groups[g]})
+			sections = append(sections, section{groupNames[g].title, groupStyles[g], groups[g]})
 		}
 	}
 	printSections(w, sections)
@@ -126,7 +174,7 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 	var footer []string
 	switch {
 	case !inv.Complete:
-		footer = append(footer, "Checks incomplete: nothing can be removed.")
+		footer = append(footer, style(boldRed, "Checks incomplete: nothing can be removed."))
 	case len(groups[gRemove]) == 0 && len(groups[gBlocked]) == 0:
 		footer = append(footer, "Nothing to remove.")
 	}
@@ -142,7 +190,7 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 			}
 		}
 		if len(hidden) > 0 {
-			footer = append(footer, "Not shown: "+strings.Join(hidden, ", ")+" (gh reap --all)")
+			footer = append(footer, style(dim, "Not shown: "+strings.Join(hidden, ", ")+" (gh reap --all)"))
 		}
 	}
 	if inv.Complete && len(groups[gRemove]) > 0 {
@@ -150,7 +198,7 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 		if header {
 			command = "cd " + shellQuote(inv.Root) + " && " + command
 		}
-		footer = append(footer, "Remove with: "+command)
+		footer = append(footer, style(dim, "Remove with:")+" "+style(bold, command))
 	}
 	if len(footer) > 0 {
 		if len(sections) > 0 {
@@ -162,6 +210,7 @@ func printInventory(w io.Writer, inv *reap.Inventory, header, all bool) {
 
 type section struct {
 	title string
+	style sectionStyle
 	rows  []row
 }
 
@@ -179,9 +228,9 @@ func printSections(w io.Writer, sections []section) {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintln(w, s.title+":")
+		fmt.Fprintln(w, style(s.style.title, s.title+":"))
 		for _, r := range s.rows {
-			line := fmt.Sprintf("  %-*s  %-*s  %s", nameW, r.name, statusW, r.status, r.info)
+			line := "  " + padded(bold, r.name, nameW) + "  " + padded(s.style.status, r.status, statusW) + "  " + style(s.style.info, r.info)
 			fmt.Fprintln(w, strings.TrimRight(line, " "))
 		}
 	}
@@ -193,8 +242,8 @@ func confirm(w io.Writer, answers *bufio.Reader, items []reap.Item) bool {
 	for _, it := range items {
 		rows = append(rows, row{name: name(it), status: removeInfo(it, false)})
 	}
-	printSections(w, []section{{"To remove", rows}})
-	fmt.Fprintf(w, "\nRemove %s? [y/N] ", scope(items))
+	printSections(w, []section{{"To remove", sectionStyle{boldMagenta, dim, dim}, rows}})
+	fmt.Fprintf(w, "\n%s [y/N] ", style(bold, "Remove "+scope(items)+"?"))
 	answer, _ := answers.ReadString('\n')
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes":
@@ -252,7 +301,11 @@ func printResult(w io.Writer, r reap.Result) {
 	if n == "" {
 		n = r.Ref
 	}
-	line := fmt.Sprintf("%-7s  %s", r.Result, n)
+	code := red
+	if r.Result == reap.Removed {
+		code = green
+	}
+	line := padded(code, r.Result, 7) + "  " + n
 	if r.Result != reap.Removed {
 		line += ": " + r.Detail
 	}
@@ -281,7 +334,7 @@ func printSummary(stdout, stderr io.Writer, rep *reap.Report) {
 			parts = append(parts, fmt.Sprintf("%d %s", n, result))
 		}
 	}
-	fmt.Fprintf(stdout, "\n%s.\n", strings.Join(parts, ", "))
+	fmt.Fprintf(stdout, "\n%s\n", style(bold, strings.Join(parts, ", ")+"."))
 }
 
 // name is how an item is shown: its branch, or its folder when it has none,

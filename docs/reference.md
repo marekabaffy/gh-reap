@@ -106,6 +106,11 @@ per item: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `failed`, `refus
 
 Listing a folder of repositories, the exit status covers every repository.
 
+## Color
+
+gh reap follows `gh`: color goes only to a terminal, and never to JSON. `NO_COLOR` or
+`CLICOLOR=0` turns it off, and `CLICOLOR_FORCE=1` turns it on for a pipe.
+
 ## Which GitHub repository
 
 gh reap picks the remote the way `gh` does: the one set with `gh repo set-default`, then

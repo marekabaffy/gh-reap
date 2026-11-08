@@ -40,9 +40,23 @@ USAGE
 FLAGS
   --all     Also show open PRs, branches without a PR, and kept branches
   --yes     remove: do not ask (needed without a terminal)
-  --json    Print JSON (see docs/reference.md)
+  --json    Print JSON
   --debug   Print each command run, to stderr
   -h, --help  Show this help
+
+EXAMPLES
+  # See what can go, then remove it after you confirm
+  $ gh reap
+  $ gh reap remove
+
+  # Remove one branch or worktree
+  $ gh reap remove fix-login
+
+  # Protect a long-lived branch
+  $ gh reap keep staging
+
+  # Remove from a script
+  $ gh reap remove --yes --json
 
 A branch goes only when its pull request merged and nothing on it is missing from
 the PR or a remote; a worktree, also only when it is clean, unlocked and unused.
@@ -52,6 +66,10 @@ EXIT STATUS
   0  success
   1  an item failed or was refused, the checks were incomplete, or another run holds the lock
   2  usage error
+
+LEARN MORE
+  https://github.com/marekabaffy/gh-reap
+  JSON fields and reason codes: https://github.com/marekabaffy/gh-reap/blob/main/docs/reference.md
 `
 
 type flags struct {
@@ -64,6 +82,7 @@ type flags struct {
 
 // Run runs gh reap with args (without the program name) and returns the exit code.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	color = colorEnabled(stdout)
 	cmd := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]

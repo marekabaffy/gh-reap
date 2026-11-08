@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -46,6 +47,89 @@ func TestRun_Help(t *testing.T) {
 		if code := Run(args, strings.NewReader(""), &out, io.Discard); code != ExitOK || !strings.Contains(out.String(), "EXIT STATUS") {
 			t.Errorf("%v: exit %d", args, code)
 		}
+		for _, want := range []string{"EXAMPLES", "$ gh reap remove fix-login", "https://github.com/marekabaffy/gh-reap/blob/main/docs/reference.md"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%v: help lacks %q", args, want)
+			}
+		}
+	}
+}
+
+// Styled output is the plain output plus escape codes, and nothing else:
+// the text and the alignment do not change.
+func TestColor_OnlyAddsEscapes(t *testing.T) {
+	yes, no := bufio.NewReader(strings.NewReader("y\n")), bufio.NewReader(strings.NewReader("n\n"))
+	render := func(answers *bufio.Reader) string {
+		var out bytes.Buffer
+		printInventory(&out, inventory(), true, true)
+		printInventory(&out, inventory(), false, false)
+		printInventory(&out, &reap.Inventory{Root: "/r", Warnings: []string{"w"}, Problems: []string{"p"}}, false, false)
+		confirm(&out, answers, []reap.Item{{Kind: reap.KindBranch, Branch: "b"}, {Kind: reap.KindWorktree, Branch: "longer"}})
+		printResult(&out, reap.Result{Branch: "b", Result: reap.Removed})
+		printResult(&out, reap.Result{Branch: "h", Result: reap.Failed, Detail: "boom"})
+		printSummary(&out, io.Discard, &reap.Report{Results: []reap.Result{{Result: reap.Removed}, {Result: reap.Failed}}})
+		return out.String()
+	}
+	plain := render(yes)
+	if strings.Contains(plain, "\x1b") {
+		t.Fatalf("plain output has escape codes: %q", plain)
+	}
+	color = true
+	t.Cleanup(func() { color = false })
+	styled := render(no)
+	if styled == plain {
+		t.Fatal("styled output has no escape codes")
+	}
+	if stripped := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(styled, ""); strings.ReplaceAll(stripped, "Canceled.\n", "") != plain {
+		t.Errorf("stripped\n%q\nplain\n%q", stripped, plain)
+	}
+}
+
+func TestColor_Styles(t *testing.T) {
+	color = true
+	t.Cleanup(func() { color = false })
+	var out bytes.Buffer
+	printInventory(&out, inventory(), false, false)
+	for _, want := range []string{
+		"\x1b[1;35mTo remove:\x1b[0m\n",
+		"  \x1b[1mlogin\x1b[0m  \x1b[35mPR #1 merged\x1b[0m  \x1b[2mworktree and branch, 2.0M, teardown hook\x1b[0m\n",
+		"\x1b[1;31mBlocked:\x1b[0m\n",
+		"  \x1b[1mspike\x1b[0m  \x1b[35mPR #3 merged\x1b[0m  \x1b[31m3 uncommitted files\x1b[0m\n",
+		"\x1b[2mRemove with:\x1b[0m \x1b[1mgh reap remove\x1b[0m\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%q", want, out.String())
+		}
+	}
+}
+
+func TestColorEnabled(t *testing.T) {
+	clear := func(t *testing.T) {
+		for _, k := range []string{"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "GH_FORCE_TTY"} {
+			t.Setenv(k, "")
+		}
+	}
+	for _, tt := range []struct {
+		name string
+		env  []string
+		out  io.Writer
+		want bool
+	}{
+		{"forced", []string{"CLICOLOR_FORCE", "1"}, os.Stdout, true},
+		{"forced tty", []string{"GH_FORCE_TTY", "1"}, os.Stdout, true},
+		{"NO_COLOR beats a forced tty", []string{"GH_FORCE_TTY", "1", "NO_COLOR", "1"}, os.Stdout, false},
+		{"CLICOLOR=0 beats a forced tty", []string{"GH_FORCE_TTY", "1", "CLICOLOR", "0"}, os.Stdout, false},
+		{"not standard output", []string{"CLICOLOR_FORCE", "1"}, &bytes.Buffer{}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clear(t)
+			for i := 0; i < len(tt.env); i += 2 {
+				t.Setenv(tt.env[i], tt.env[i+1])
+			}
+			if got := colorEnabled(tt.out); got != tt.want {
+				t.Errorf("colorEnabled = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
