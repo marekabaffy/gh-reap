@@ -44,5 +44,7 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 ## Releases
 
-Push a tag `vX.Y.Z`; the release workflow builds with `script/build.sh` and publishes with
-`cli/gh-extension-precompile`.
+Push a tag `vX.Y.Z`; the release workflow builds with `script/build.sh`, uploads and attests
+a draft with `cli/gh-extension-precompile`, then publishes it. If it fails before
+publishing, re-run the workflow. A published release is final: its tag and assets cannot
+change, so a bad one needs a new version.
