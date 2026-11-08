@@ -18,7 +18,7 @@ Plain git cannot tell which branches are done, because a squash or rebase merge 
 them looking unmerged. gh reap asks GitHub instead, checks that nothing local would be
 lost, and never forces a removal.
 
-<img src="docs/assets/demo.png" width="571" alt="gh reap lists two merged items to remove and one blocked by uncommitted files. gh reap remove then asks, removes the worktree and deletes both branches.">
+<img src="docs/assets/demo.gif" width="720" alt="A terminal recording. gh reap lists two merged items to remove and one blocked by uncommitted files. gh reap remove then asks, removes the worktree and deletes both branches.">
 
 ## Install
 
