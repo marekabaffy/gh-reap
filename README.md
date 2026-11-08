@@ -36,8 +36,9 @@ To remove:
   typo   branch
 
 Remove 1 worktree and 2 branches? [y/N] y
-removed  login
-removed  typo
+✓ Removed worktree ~/src/widgets-login
+✓ Deleted local branch login
+✓ Deleted local branch typo
 
 2 removed.
 ```

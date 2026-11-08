@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -164,7 +165,8 @@ func (e *env) environ() []string {
 		k, _, _ := strings.Cut(kv, "=")
 		switch strings.ToUpper(k) {
 		case "GH_HOST", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_REPO",
-			"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "GH_CONFIG_DIR", "PATH", "GIT_DIR", "GIT_WORK_TREE", "GOCOVERDIR":
+			"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "GH_CONFIG_DIR", "PATH", "GIT_DIR", "GIT_WORK_TREE", "GOCOVERDIR",
+			"NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "GH_FORCE_TTY":
 			continue
 		}
 		env = append(env, kv)
@@ -228,9 +230,14 @@ type run struct {
 
 func (e *env) run(dir string, args ...string) run {
 	e.t.Helper()
+	return e.runEnv(dir, nil, args...)
+}
+
+func (e *env) runEnv(dir string, extra []string, args ...string) run {
+	e.t.Helper()
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = dir
-	cmd.Env = e.environ()
+	cmd.Env = append(e.environ(), extra...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -761,7 +768,11 @@ func TestE2E_RemoveAsks(t *testing.T) {
 	e.gh.set("done", pr{1, "MERGED", tip, ""})
 
 	r := e.inTerminal(e.main, "n\n", "remove")
-	if r.code != 0 || !strings.Contains(r.stdout, "Remove 1 worktree and 1 branch? [y/N]") || !strings.Contains(r.stdout, "Canceled.") {
+	if !strings.Contains(r.stdout, "\x1b[1mTo remove:\x1b[0m") {
+		t.Errorf("a terminal gets color:\n%q", r.stdout)
+	}
+	shown := ansiCode.ReplaceAllString(r.stdout, "")
+	if r.code != 0 || !strings.Contains(shown, "Remove 1 worktree and 1 branch? [y/N]") || !strings.Contains(shown, "Canceled.") {
 		t.Errorf("declined: exit %d\n%q", r.code, r.stdout)
 	}
 	if !e.exists(path) || !e.hasBranch("done") {
@@ -769,11 +780,53 @@ func TestE2E_RemoveAsks(t *testing.T) {
 	}
 
 	r = e.inTerminal(e.main, "y\n", "remove")
-	if r.code != 0 || !strings.Contains(r.stdout, "removed  done") || !strings.Contains(r.stdout, "1 removed.") {
+	shown = ansiCode.ReplaceAllString(r.stdout, "")
+	if r.code != 0 || !strings.Contains(shown, "✓ Removed worktree") || !strings.Contains(shown, "✓ Deleted local branch done") || !strings.Contains(shown, "1 removed.") {
 		t.Errorf("accepted: exit %d\n%q", r.code, r.stdout)
 	}
 	if e.exists(path) || e.hasBranch("done") {
 		t.Error("accepted, but still there")
+	}
+}
+
+func TestE2E_FlagsAfterNames(t *testing.T) {
+	e := newEnv(t)
+	tip := e.branch("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+
+	// Flags may follow names, as in gh's own commands.
+	if r := e.run(e.main, "remove", "done", "--yes", "--json"); r.code != 0 || !strings.Contains(r.stdout, `"result": "removed"`) {
+		t.Errorf("flags after a name: %+v", r)
+	}
+	if e.hasBranch("done") {
+		t.Error("still there")
+	}
+	// After "--", what looks like a flag is a name.
+	if r := e.run(e.main, "keep", "--", "--help"); r.code != 1 || !strings.Contains(r.stderr, `no local branch "--help"`) {
+		t.Errorf("after --: %+v", r)
+	}
+}
+
+var ansiCode = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func TestE2E_Color(t *testing.T) {
+	e := newEnv(t)
+	tip := e.branch("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+
+	piped := e.run(e.main)
+	if strings.Contains(piped.stdout, "\x1b[") || !strings.Contains(piped.stdout, "To remove:") {
+		t.Errorf("piped output is plain: %q", piped.stdout)
+	}
+	forced := e.runEnv(e.main, []string{"CLICOLOR_FORCE=1"})
+	if !strings.Contains(forced.stdout, "\x1b[1mTo remove:\x1b[0m") {
+		t.Errorf("CLICOLOR_FORCE colors a pipe: %q", forced.stdout)
+	}
+	if got := ansiCode.ReplaceAllString(forced.stdout, ""); got != piped.stdout {
+		t.Errorf("color changed the text:\n%q\n%q", got, piped.stdout)
+	}
+	if r := e.runEnv(e.main, []string{"CLICOLOR_FORCE=1"}, "--json"); strings.Contains(r.stdout, "\x1b[") {
+		t.Errorf("JSON is never colored: %q", r.stdout)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/marekabaffy/gh-reap/internal/conn"
 	"github.com/marekabaffy/gh-reap/internal/reap"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 )
 
@@ -31,6 +31,10 @@ const (
 
 const usage = `Remove the worktrees and local branches of merged pull requests, safely.
 
+A branch goes only when its pull request merged and nothing on it is missing from
+the PR or a remote; a worktree, also only when it is clean, unlocked and unused.
+Its pre-worktree-remove git hook runs first.
+
 USAGE
   gh reap [--all]              Show what can be removed, and what is blocked
   gh reap remove [<name>...]   Remove it, after you confirm; <name> is a branch or worktree path
@@ -40,18 +44,32 @@ USAGE
 FLAGS
   --all     Also show open PRs, branches without a PR, and kept branches
   --yes     remove: do not ask (needed without a terminal)
-  --json    Print JSON (see docs/reference.md)
+  --json    Print JSON
   --debug   Print each command run, to stderr
   -h, --help  Show this help
 
-A branch goes only when its pull request merged and nothing on it is missing from
-the PR or a remote; a worktree, also only when it is clean, unlocked and unused.
-Its pre-worktree-remove git hook runs first.
+EXAMPLES
+  # See what can go, then remove it after you confirm
+  $ gh reap
+  $ gh reap remove
+
+  # Remove one branch or worktree
+  $ gh reap remove fix-login
+
+  # Protect a long-lived branch
+  $ gh reap keep staging
+
+  # Remove from a script
+  $ gh reap remove --yes --json
 
 EXIT STATUS
   0  success
   1  an item failed or was refused, the checks were incomplete, or another run holds the lock
   2  usage error
+
+LEARN MORE
+  https://github.com/marekabaffy/gh-reap
+  JSON fields and reason codes: https://github.com/marekabaffy/gh-reap/blob/main/docs/reference.md
 `
 
 type flags struct {
@@ -64,20 +82,20 @@ type flags struct {
 
 // Run runs gh reap with args (without the program name) and returns the exit code.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	color = colorEnabled(stdout)
 	cmd := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]
 	}
 	if cmd == "help" {
-		fmt.Fprint(stdout, usage)
+		printHelp(stdout)
 		return ExitOK
 	}
 	var f flags
-	fs := flag.NewFlagSet("gh reap", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("gh reap", pflag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&f.debug, "debug", false, "")
-	fs.BoolVar(&f.help, "help", false, "")
-	fs.BoolVar(&f.help, "h", false, "")
+	fs.BoolVarP(&f.help, "help", "h", false, "")
 	switch cmd {
 	case "":
 		fs.BoolVar(&f.all, "all", false, "")
@@ -89,12 +107,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	default:
 		return usageError(stderr, "unknown command %q", cmd)
 	}
-	pos, err := parseInterspersed(fs, args)
-	if err != nil {
+	if err := fs.Parse(args); err != nil {
 		return usageError(stderr, "%v", err)
 	}
+	pos := fs.Args()
 	if f.help {
-		fmt.Fprint(stdout, usage)
+		printHelp(stdout)
 		return ExitOK
 	}
 
@@ -145,29 +163,6 @@ func usageError(stderr io.Writer, format string, a ...any) int {
 	fmt.Fprintf(stderr, "gh reap: "+format+"\n", a...)
 	fmt.Fprintln(stderr, "Run 'gh reap --help' for usage.")
 	return ExitUsage
-}
-
-// parseInterspersed lets flags follow positional arguments, as gh's own commands
-// do. Everything after "--" is positional.
-func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
-	var rest []string
-	for i, a := range args {
-		if a == "--" {
-			args, rest = args[:i], args[i+1:]
-			break
-		}
-	}
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		args = fs.Args()
-		if len(args) == 0 {
-			return append(pos, rest...), nil
-		}
-		pos, args = append(pos, args[0]), args[1:]
-	}
 }
 
 func gatherOptions() (reap.GatherOptions, error) {
