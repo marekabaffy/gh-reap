@@ -114,26 +114,6 @@ if [ -f compose.yaml ]; then
 fi
 ```
 
-## Compared with similar tools
-
-[gh-poi](https://github.com/seachicken/gh-poi) and
-[gh-reaper](https://github.com/ai-ecoverse/gh-reaper) are GitHub CLI extensions that also
-clean up after finished work. This compares gh-poi v0.18.6 and gh-reaper v1.10.0.
-
-| | gh reap | gh-poi | gh-reaper |
-|---|---|---|---|
-| Deletes local branches | yes | yes | no |
-| Removes worktrees | yes | clean ones | yes |
-| Recognizes squash and rebase merges | yes | yes | with `--check-prs` |
-| Compares the branch's commits with the PR | yes | yes | no, it matches by branch name |
-| Runs a teardown hook | yes | no | no |
-| Asks before removing | yes | no, `--dry-run` previews | yes, unless `--yes` |
-| Uses git's force options | never | after its own checks | on some worktrees, and with `--force` |
-| Scans your whole machine | no | no | yes |
-
-Use gh-reaper to sweep old worktrees across your machine by age and size. Use gh-poi for a
-one-step cleanup with no prompt, or to delete the branches of closed pull requests too.
-
 ## Contributing
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
