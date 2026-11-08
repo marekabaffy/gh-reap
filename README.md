@@ -1,17 +1,15 @@
-<h1 align="center">
+<h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
-    <img src="docs/assets/wordmark-light.svg" alt="gh reap" width="280">
+    <img src="docs/assets/wordmark-light.svg" alt="gh reap" width="220">
   </picture>
 </h1>
 
-<p align="center"><strong>Reap what you merged.</strong></p>
+Reap what you merged.
 
-<p align="center">
-  <a href="https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml"><img src="https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/marekabaffy/gh-reap/releases/latest"><img src="https://img.shields.io/github/v/release/marekabaffy/gh-reap" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-</p>
+[![CI](https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml/badge.svg)](https://github.com/marekabaffy/gh-reap/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/marekabaffy/gh-reap)](https://github.com/marekabaffy/gh-reap/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A [GitHub CLI](https://cli.github.com) extension that cleans up the git worktrees and
 local branches of merged pull requests, and keeps everything else.
@@ -92,11 +90,11 @@ or, with [myrepos](https://myrepos.branchable.com/), `mr run gh reap remove`.
 
 An item is removed only when all of these hold:
 
-- ✅ Its pull request, from this repository or one of your remotes, is merged.
-- ✅ Every local commit is in that pull request or on a remote.
-- ✅ The worktree is clean, unlocked, holds no other worktree, and no process is
+- Its pull request, from this repository or one of your remotes, is merged.
+- Every local commit is in that pull request or on a remote.
+- The worktree is clean, unlocked, holds no other worktree, and no process is
   running inside it.
-- ✅ It is not the main checkout, the default branch, or marked keep.
+- It is not the main checkout, the default branch, or marked keep.
 
 If anything cannot be checked (GitHub is down, `lsof` fails), nothing is removed.
 
