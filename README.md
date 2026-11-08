@@ -18,30 +18,7 @@ Plain git cannot tell which branches are done, because a squash or rebase merge 
 them looking unmerged. gh reap asks GitHub instead, checks that nothing local would be
 lost, and never forces a removal.
 
-```
-$ gh reap
-To remove:
-  login  PR #41 merged  worktree and branch, 12M, teardown hook
-  typo   PR #39 merged  branch
-
-Blocked:
-  spike  PR #40 merged  2 uncommitted files
-
-Not shown: 1 open PR, 3 without a PR (gh reap --all)
-Remove with: gh reap remove
-
-$ gh reap remove
-To remove:
-  login  worktree and branch, teardown hook
-  typo   branch
-
-Remove 1 worktree and 2 branches? [y/N] y
-✓ Removed worktree ~/src/widgets-login
-✓ Deleted local branch login
-✓ Deleted local branch typo
-
-2 removed.
-```
+<img src="docs/assets/demo.png" width="571" alt="gh reap lists two merged items to remove and one blocked by uncommitted files. gh reap remove then asks, removes the worktree and deletes both branches.">
 
 ## Install
 
@@ -49,12 +26,15 @@ Remove 1 worktree and 2 branches? [y/N] y
 gh extension install marekabaffy/gh-reap
 ```
 
-You also need:
+Update it later with `gh extension upgrade reap`.
+
+gh reap runs on macOS and Linux. Windows is not supported, because gh reap uses `lsof` to
+see what is running inside a worktree. You also need:
 
 - `gh`, signed in (`gh auth login`)
 - `lsof`
-- git with config-based hooks (tested with 2.56). An older git still removes branches,
-  but keeps worktrees.
+- git 2.54 or newer, for teardown hooks. An older git still removes branches, but keeps
+  worktrees.
 
 ## Usage
 
@@ -133,6 +113,26 @@ if [ -f compose.yaml ]; then
   docker compose -p "$(basename "$1")" down --volumes
 fi
 ```
+
+## Compared with similar tools
+
+[gh-poi](https://github.com/seachicken/gh-poi) and
+[gh-reaper](https://github.com/ai-ecoverse/gh-reaper) are GitHub CLI extensions that also
+clean up after finished work. This compares gh-poi v0.18.6 and gh-reaper v1.10.0.
+
+| | gh reap | gh-poi | gh-reaper |
+|---|---|---|---|
+| Deletes local branches | yes | yes | no |
+| Removes worktrees | yes | clean ones | yes |
+| Recognizes squash and rebase merges | yes | yes | with `--check-prs` |
+| Compares the branch's commits with the PR | yes | yes | no, it matches by branch name |
+| Runs a teardown hook | yes | no | no |
+| Asks before removing | yes | no, `--dry-run` previews | yes, unless `--yes` |
+| Uses git's force options | never | after its own checks | on some worktrees, and with `--force` |
+| Scans your whole machine | no | no | yes |
+
+Use gh-reaper to sweep old worktrees across your machine by age and size. Use gh-poi for a
+one-step cleanup with no prompt, or to delete the branches of closed pull requests too.
 
 ## Contributing
 
