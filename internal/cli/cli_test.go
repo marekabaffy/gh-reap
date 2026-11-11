@@ -226,9 +226,16 @@ func TestSizeTildeName(t *testing.T) {
 	if tilde(home+"/w/x") != "~/w/x" || tilde("/elsewhere") != "/elsewhere" || tilde(home+"x") != home+"x" {
 		t.Error("tilde")
 	}
+	// A long name is cut to fit a terminal's column, and whole in a pipe, where a
+	// script may pass it back to gh reap remove.
 	long := strings.Repeat("x", 50)
+	if got := name(reap.Item{Branch: long}); got != long {
+		t.Errorf("name in a pipe: %q", got)
+	}
+	fit = true
+	defer func() { fit = false }()
 	if got := name(reap.Item{Branch: long}); got != strings.Repeat("x", 39)+"…" {
-		t.Errorf("name: %q", got)
+		t.Errorf("name on a terminal: %q", got)
 	}
 	if got := name(reap.Item{Path: "/w/d"}); got != "/w/d" {
 		t.Errorf("name of a detached tree: %q", got)

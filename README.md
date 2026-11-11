@@ -74,8 +74,8 @@ An item is removed only when all of these hold:
 
 - Its pull request, from this repository or one of your remotes, is merged.
 - Every local commit is in that pull request or on a remote.
-- The worktree is clean, unlocked, holds no other worktree, and no process is
-  running inside it.
+- The worktree is clean, unlocked, holds no other worktree, and none of your
+  processes has its working directory inside it.
 - It is not the main checkout, the default branch, or marked keep.
 
 If anything cannot be checked (GitHub is down, `lsof` fails), nothing is removed.

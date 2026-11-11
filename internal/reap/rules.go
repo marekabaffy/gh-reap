@@ -23,10 +23,10 @@ const (
 const (
 	// REMOVE
 	ReasonPRMerged   = "pr-merged"
-	ReasonPRClosed   = "pr-closed"
 	ReasonFolderGone = "folder-gone"
 
 	// KEEP
+	ReasonPRClosed         = "pr-closed"
 	ReasonMainCheckout     = "main-checkout"
 	ReasonContainsTree     = "contains-worktree"
 	ReasonLocked           = "locked"
@@ -60,7 +60,7 @@ type BranchFacts struct {
 	PR    *conn.PR // nil: no PR for this branch
 	PRErr error    // the PR read failed: nothing is known
 
-	// Known only when PR != nil and PRErr == nil.
+	// Known only for a merged PR, when PRErr == nil.
 	HeadPresent bool  // the PR head commit exists locally
 	Unpushed    int   // commits on the branch in neither the PR head nor any remote
 	Ancestor    bool  // the branch tip is the PR head or an ancestor of it

@@ -74,6 +74,14 @@ var colorEnabled = func(stdout io.Writer) bool {
 	return stdout == io.Writer(os.Stdout) && ghterm.FromEnv().IsColorEnabled()
 }
 
+// fit says whether names are cut to fit a column: only on a terminal. A pipe gets
+// every name whole, so a script can pass it back to gh reap remove. Run sets it once.
+var fit bool
+
+var terminalOutput = func(stdout io.Writer) bool {
+	return stdout == io.Writer(os.Stdout) && ghterm.FromEnv().IsTerminalOutput()
+}
+
 func style(code, s string) string {
 	if !color || s == "" {
 		return s
@@ -369,14 +377,14 @@ func printSummary(stdout, stderr io.Writer, rep *reap.Report) {
 }
 
 // name is how an item is shown: its branch, or its folder when it has none,
-// cut to fit a column.
+// cut to fit a column on a terminal.
 func name(it reap.Item) string {
 	n := it.Branch
 	if n == "" {
 		n = tilde(it.Path)
 	}
 	const width = 40
-	if r := []rune(n); len(r) > width {
+	if r := []rune(n); fit && len(r) > width {
 		return string(r[:width-1]) + "…"
 	}
 	return n
