@@ -827,6 +827,32 @@ func TestE2E_LongNameInAPipe(t *testing.T) {
 	}
 }
 
+// A PR that got a commit this clone never pulled, and whose branch was deleted on
+// merge: a plain fetch no longer finds the head, and the hint names the one that does.
+func TestE2E_PRHeadOnlyOnGitHub(t *testing.T) {
+	e := newEnv(t)
+	path, tip := e.worktree("done")
+	head := e.commit(path, "more.txt", "added on GitHub\n")
+	e.git(path, "push", "-q", "origin", "HEAD:refs/pull/1/head")
+	e.git(path, "push", "-q", "origin", "--delete", "done")
+	e.git(path, "reset", "-q", "--hard", tip)
+	e.git(e.main, "reflog", "expire", "--expire=now", "--all")
+	e.git(e.main, "gc", "-q", "--prune=now")
+	e.gh.set("done", pr{1, "MERGED", head, ""})
+
+	e.git(e.main, "fetch", "-q", "--prune", "origin")
+	l, _ := e.list(e.main)
+	it := byName(l)["done"]
+	expect(t, it, "KEEP", "pr-head-missing")
+	const hint = "git fetch origin pull/1/head"
+	if !strings.Contains(it.Detail, "("+hint+")") {
+		t.Fatalf("detail: %q", it.Detail)
+	}
+	e.git(e.main, strings.Fields(hint)[1:]...)
+	l, _ = e.list(e.main)
+	expect(t, byName(l)["done"], "REMOVE", "pr-merged")
+}
+
 func TestE2E_FlagsAfterNames(t *testing.T) {
 	e := newEnv(t)
 	tip := e.branch("done")

@@ -57,6 +57,9 @@ type BranchFacts struct {
 	// Protected is ReasonDefaultBranch or ReasonCurrentBranch, or empty.
 	Protected string
 
+	// Remote is the git remote of the GitHub repository, or empty when none is.
+	Remote string
+
 	PR    *conn.PR // nil: no PR for this branch
 	PRErr error    // the PR read failed: nothing is known
 
@@ -126,7 +129,13 @@ func DecideBranch(b BranchFacts) Decision {
 	case b.CheckErr != nil:
 		return keep(ReasonCheckFailed, b.CheckErr.Error())
 	case !b.HeadPresent:
-		return keep(ReasonPRHeadMissing, "PR head not fetched (git fetch)")
+		// GitHub keeps the head at refs/pull/<n>/head after the branch is deleted,
+		// where a plain git fetch no longer finds it.
+		detail := "PR head not fetched"
+		if b.Remote != "" {
+			detail += fmt.Sprintf(" (git fetch %s pull/%d/head)", b.Remote, pr.Number)
+		}
+		return keep(ReasonPRHeadMissing, detail)
 	case b.Unpushed > 0:
 		return keep(ReasonUnpushed, fmt.Sprintf("%d %s not in PR or remote", b.Unpushed, plural(b.Unpushed, "commit", "commits")))
 	case !b.Ancestor:

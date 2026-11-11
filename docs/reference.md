@@ -76,7 +76,7 @@ per item: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `failed`, `refus
 | `no-pr` | KEEP | no PR from this repository or one of your remotes has this branch as its head |
 | `pr-open` | KEEP | its PR is open |
 | `pr-unknown` | KEEP | pull requests could not be read, or GitHub's answer lacked the default branch |
-| `pr-head-missing` | KEEP | the PR head commit is not in the local clone (fetch, then retry) |
+| `pr-head-missing` | KEEP | the PR head commit is not in the local clone; `detail` names the `git fetch` that gets it |
 | `unpushed-commits` | KEEP | commits on the branch in neither the PR nor any remote |
 | `not-on-pr-head` | KEEP | the branch tip is not the PR head or behind it |
 | `check-failed` | KEEP | a git command needed for the checks failed |
