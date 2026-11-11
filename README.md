@@ -51,6 +51,7 @@ see what is running inside a worktree. You also need:
 | `--yes` | `remove` without asking; needed without a terminal |
 | `--json` | Print JSON, described in [docs/reference.md](docs/reference.md) |
 | `--debug` | Print each command gh reap runs |
+| `--version` | Show the gh reap version |
 
 A blocked item goes once you fix what it shows: commit or push the work, or close what
 runs inside it. To throw the work away instead, use git (`git worktree remove --force`,

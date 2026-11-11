@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"syscall"
@@ -45,11 +46,12 @@ USAGE
   gh reap unkeep <branch>...   Undo keep
 
 FLAGS
-  --all     Also show open PRs, branches without a PR, and kept branches
-  --yes     remove: do not ask (needed without a terminal)
-  --json    Print JSON
-  --debug   Print each command run, to stderr
-  -h, --help  Show this help
+  --all        Also show open PRs, branches without a PR, and kept branches
+  --yes        remove: do not ask (needed without a terminal)
+  --json       Print JSON
+  --debug      Print each command run, to stderr
+  --version    Show the gh reap version
+  -h, --help   Show this help
 
 EXAMPLES
   # See what can go, then remove it after you confirm
@@ -77,11 +79,12 @@ LEARN MORE
 `
 
 type flags struct {
-	all   bool
-	yes   bool
-	json  bool
-	debug bool
-	help  bool
+	all     bool
+	yes     bool
+	json    bool
+	debug   bool
+	help    bool
+	version bool
 }
 
 // Run runs gh reap with args (without the program name) and returns the exit code.
@@ -100,6 +103,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&f.debug, "debug", false, "")
 	fs.BoolVarP(&f.help, "help", "h", false, "")
+	fs.BoolVar(&f.version, "version", false, "")
 	switch cmd {
 	case "":
 		fs.BoolVar(&f.all, "all", false, "")
@@ -117,6 +121,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	pos := fs.Args()
 	if f.help {
 		printHelp(stdout)
+		return ExitOK
+	}
+	if f.version {
+		fmt.Fprintln(stdout, "gh reap version "+version())
 		return ExitOK
 	}
 
@@ -155,6 +163,23 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return runKeep(ctx, x, cmd == "keep", pos, stdout, stderr)
 	}
+}
+
+// Version is the release tag, set by script/build.sh when it builds a release.
+var Version string
+
+// version is what --version shows: the release tag. Any other build shows what
+// the Go toolchain recorded from git, a pseudo-version naming its commit, or
+// "dev" outside a git checkout.
+func version() string {
+	v := Version
+	if info, ok := debug.ReadBuildInfo(); v == "" && ok && info.Main.Version != "(devel)" {
+		v = info.Main.Version
+	}
+	if v == "" {
+		return "dev"
+	}
+	return strings.TrimPrefix(v, "v")
 }
 
 // interactive says whether a person can answer a question: stdin and stdout
