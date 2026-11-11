@@ -927,18 +927,20 @@ func TestE2E_KilledRunLeavesNoLock(t *testing.T) {
 	}
 	e.hook("exit 0\n")
 	deadline := time.Now().Add(30 * time.Second)
-	for {
+	// Until the orphaned hook has left the tree, the tree is in use and a run
+	// finds nothing to remove, which is no failure: wait for the removal itself.
+	for e.exists(path) {
 		r := e.run(e.main, "remove", "--yes")
-		if r.code == 0 {
-			break
+		if strings.Contains(r.stderr, "lock") {
+			t.Fatalf("locked out by a dead run: %+v", r)
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("never removed after the kill: %+v", r)
 		}
-		time.Sleep(50 * time.Millisecond) // the orphaned hook is still leaving the tree
+		time.Sleep(50 * time.Millisecond)
 	}
-	if e.exists(path) || e.hasBranch("a") || e.exists(lock) {
-		t.Error("the run after the kill did not remove the tree, the branch and the lock file")
+	if e.hasBranch("a") || e.exists(lock) {
+		t.Error("the run after the kill left the branch or the lock file")
 	}
 	// list never takes the lock.
 	if _, r := e.list(e.main); r.code != 0 {
