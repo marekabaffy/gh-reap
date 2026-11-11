@@ -23,13 +23,25 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Removal needs config-based git hooks, which only a recent git has.
-      - name: Newest git (Ubuntu)
+      # Removal needs config-based git hooks, which only a recent git has. The
+      # runner's own git is used when it has them, so the build does not depend on
+      # Launchpad being up; the contract workflow is the one that tracks the newest git.
+      - name: Git with config-based hooks, and lsof (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          sudo add-apt-repository -y ppa:git-core/ppa
-          sudo apt-get update
-          sudo apt-get install -y git lsof
+          has_hooks() {
+            local out
+            out=$(git hook list --allow-unknown-hook-name x 2>&1) || grep -q "no hooks found" <<<"$out"
+          }
+          if ! has_hooks; then
+            sudo add-apt-repository -y ppa:git-core/ppa
+            sudo apt-get update
+            sudo apt-get install -y git
+          fi
+          if ! command -v lsof >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y lsof
+          fi
       - name: Newest git (macOS)
         if: runner.os == 'macOS'
         run: |
