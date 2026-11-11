@@ -812,6 +812,21 @@ func TestE2E_RemoveAsks(t *testing.T) {
 	}
 }
 
+// In a pipe a long name is printed whole, so it can be passed back to remove.
+func TestE2E_LongNameInAPipe(t *testing.T) {
+	e := newEnv(t)
+	long := "feature-" + strings.Repeat("a-very-long-name-", 4) + "end"
+	tip := e.branch(long)
+	e.gh.set(long, pr{1, "MERGED", tip, ""})
+	r := e.run(e.main)
+	if r.code != 0 || !strings.Contains(r.stdout, "  "+long+"  ") {
+		t.Fatalf("exit %d\n%s", r.code, r.stdout)
+	}
+	if r = e.run(e.main, "remove", "--yes", long); r.code != 0 || e.hasBranch(long) {
+		t.Errorf("remove by the printed name: %+v", r)
+	}
+}
+
 func TestE2E_FlagsAfterNames(t *testing.T) {
 	e := newEnv(t)
 	tip := e.branch("done")

@@ -90,6 +90,7 @@ type flags struct {
 // Run runs gh reap with args (without the program name) and returns the exit code.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	color = colorEnabled(stdout)
+	fit = terminalOutput(stdout)
 	cmd := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]

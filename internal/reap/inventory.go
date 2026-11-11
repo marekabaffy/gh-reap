@@ -192,7 +192,7 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 		}
 		if pr, ok := inv.prs.ByBranch[b.Name]; ok {
 			f.PR = &pr
-			if pr.State == "MERGED" || pr.State == "CLOSED" {
+			if pr.State == "MERGED" { // the only state whose commits the rules compare
 				jobs = append(jobs, func() { branchChecks(ctx, c, root, f) })
 			}
 		}

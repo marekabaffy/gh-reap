@@ -69,7 +69,7 @@ per item: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `failed`, `refus
 | `marked-keep` | KEEP | marked with `gh reap keep` |
 | `default-branch` | KEEP | the repository's default branch |
 | `current-branch` | KEEP | checked out in the main checkout |
-| `in-use` | KEEP | a process works inside the tree |
+| `in-use` | KEEP | one of your processes has its working directory inside the tree; other users' processes are not seen |
 | `processes-unknown` | KEEP | `lsof` failed, is missing, or printed output gh reap cannot read |
 | `dirty` | KEEP | uncommitted or untracked files |
 | `status-failed` | KEEP | `git status` failed |
