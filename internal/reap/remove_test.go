@@ -130,6 +130,56 @@ func TestRemove_ByRef(t *testing.T) {
 	}
 }
 
+// A branch whose worktree folder is gone is two items. Its name removes both: the
+// registration first, so git lets the branch go.
+func TestRemove_BranchNameWithGoneFolder(t *testing.T) {
+	f := removable(t)
+	f.PRs.ByBranch["gone"] = conn.PR{Number: 5, State: "MERGED", HeadOID: oid["gone"]}
+	f.Bools["HasCommit "+oid["gone"]] = true
+	f.Bools["IsAncestor "+oid["gone"]+" "+oid["gone"]] = true
+	f.Set("CountUnpushed "+oid["gone"]+" "+oid["gone"], "0")
+	f.Set("DeleteBranch -d gone", "Deleted branch gone\n")
+	var asked []string
+	rep := remove(t, f, RemoveOptions{Refs: []string{"gone"}, Confirm: func(items []Item) bool {
+		for _, it := range items {
+			asked = append(asked, it.Ref)
+		}
+		return true
+	}})
+	want := map[string]string{
+		"worktree:" + R + "/wt-gone": "removed folder-gone",
+		"branch:gone":                "removed pr-merged",
+	}
+	if got := outcomes(rep); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v", got)
+	}
+	if got, want := mutations(f), []string{"RemoveWorktree " + R + "/wt-gone", "DeleteBranch -d gone"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("mutations:\n got %v\nwant %v", got, want)
+	}
+	if len(asked) != 2 {
+		t.Errorf("the question showed %v", asked)
+	}
+
+	// The worktree's own ref, or its path, names the registration alone.
+	f = removable(t)
+	rep = remove(t, f, RemoveOptions{Refs: []string{"worktree:" + R + "/wt-gone"}})
+	if got := outcomes(rep); len(got) != 1 || got["worktree:"+R+"/wt-gone"] != "removed folder-gone" {
+		t.Errorf("by worktree ref: %v", got)
+	}
+
+	// With its PR still open, the name prunes the registration and says why the
+	// branch stays.
+	f = removable(t)
+	rep = remove(t, f, RemoveOptions{Refs: []string{"gone", "gone"}})
+	want = map[string]string{
+		"worktree:" + R + "/wt-gone": "removed folder-gone",
+		"branch:gone":                "refused pr-open",
+	}
+	if got := outcomes(rep); !reflect.DeepEqual(got, want) || len(rep.Results) != 2 || rep.OK() {
+		t.Errorf("open PR: %v (%d results)", got, len(rep.Results))
+	}
+}
+
 func TestRemove_Failures(t *testing.T) {
 	tests := []struct {
 		name    string

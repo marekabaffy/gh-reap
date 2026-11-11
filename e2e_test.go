@@ -612,6 +612,29 @@ func TestE2E_RemoveByRef(t *testing.T) {
 	}
 }
 
+// A branch whose worktree folder was deleted by hand goes by name in one run:
+// the stale registration, then the branch.
+func TestE2E_RemoveBranchWhoseFolderIsGone(t *testing.T) {
+	e := newEnv(t)
+	path, tip := e.worktree("gone")
+	e.gh.set("gone", pr{1, "MERGED", tip, ""})
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	rep, r := e.remove(e.main, "gone")
+	if r.code != 0 || len(rep.Results) != 2 {
+		t.Fatalf("exit %d: %+v\n%s", r.code, rep.Results, r.stderr)
+	}
+	for _, res := range rep.Results {
+		if res.Result != "removed" {
+			t.Errorf("%s: %s %s (%s)", res.Ref, res.Result, res.Reason, res.Detail)
+		}
+	}
+	if e.hasBranch("gone") || strings.Contains(e.git(e.main, "worktree", "list"), "wt-gone") {
+		t.Error("the branch or the registration is still there")
+	}
+}
+
 func TestE2E_RevalidatesBeforeActing(t *testing.T) {
 	e := newEnv(t)
 	path, tip := e.worktree("moving")
