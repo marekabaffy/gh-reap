@@ -65,6 +65,15 @@ func TestRun_Version(t *testing.T) {
 	}
 }
 
+func TestVersion_ReleaseTag(t *testing.T) {
+	Version = "v1.2.3"
+	defer func() { Version = "" }()
+	var out bytes.Buffer
+	if Run([]string{"--version"}, strings.NewReader(""), &out, io.Discard); out.String() != "gh reap version 1.2.3\n" {
+		t.Errorf("got %q", out.String())
+	}
+}
+
 func TestColor_OnlyAddsEscapes(t *testing.T) {
 	yes, no := bufio.NewReader(strings.NewReader("y\n")), bufio.NewReader(strings.NewReader("n\n"))
 	render := func(answers *bufio.Reader) string {

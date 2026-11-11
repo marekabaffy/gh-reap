@@ -165,15 +165,21 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
-// version is the release this binary was built from: the tag, as the Go toolchain
-// records it from git at build time. A build between tags carries a pseudo-version
-// naming its commit; a build outside a git checkout is "dev".
+// Version is the release tag, set by script/build.sh when it builds a release.
+var Version string
+
+// version is what --version shows: the release tag. Any other build shows what
+// the Go toolchain recorded from git, a pseudo-version naming its commit, or
+// "dev" outside a git checkout.
 func version() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+	v := Version
+	if info, ok := debug.ReadBuildInfo(); v == "" && ok && info.Main.Version != "(devel)" {
+		v = info.Main.Version
+	}
+	if v == "" {
 		return "dev"
 	}
-	return strings.TrimPrefix(info.Main.Version, "v")
+	return strings.TrimPrefix(v, "v")
 }
 
 // interactive says whether a person can answer a question: stdin and stdout
