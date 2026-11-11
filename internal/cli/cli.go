@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/cli/go-gh/v2/pkg/auth"
 	"github.com/cli/go-gh/v2/pkg/repository"
@@ -27,6 +28,8 @@ const (
 	ExitOK    = 0
 	ExitFail  = 1 // an item failed or was refused, or the list is incomplete
 	ExitUsage = 2
+	// ExitInterrupted is what a shell reports for a command stopped by Ctrl-C.
+	ExitInterrupted = 130
 )
 
 const usage = `Remove the worktrees and local branches of merged pull requests, safely.
@@ -63,9 +66,10 @@ EXAMPLES
   $ gh reap remove --yes --json
 
 EXIT STATUS
-  0  success
-  1  an item failed or was refused, the checks were incomplete, or another run holds the lock
-  2  usage error
+  0    success
+  1    an item failed or was refused, the checks were incomplete, or another run holds the lock
+  2    usage error
+  130  interrupted
 
 LEARN MORE
   https://github.com/marekabaffy/gh-reap
@@ -116,7 +120,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return ExitOK
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// An interrupt, a kill or a closed terminal stops the run at the next step:
+	// the command in flight is killed, and nothing further is removed.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	x := &conn.Exec{}
 	if f.debug {
@@ -220,6 +226,9 @@ func runList(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions, 
 	var invs []*reap.Inventory
 	for _, d := range dirs {
 		inv, err := reap.Gather(ctx, c, d, opt)
+		if ctx.Err() != nil {
+			return ExitInterrupted
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "gh reap: %s: %v\n", d, err)
 			code = ExitFail
@@ -286,10 +295,13 @@ func runRemove(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions
 	}
 	if !f.yes {
 		answers := bufio.NewReader(stdin)
-		ropt.Confirm = func(items []reap.Item) bool { return confirm(stdout, answers, items) }
+		ropt.Confirm = func(items []reap.Item) bool { return confirm(ctx, stdout, answers, items) }
 	}
 	rep, err := reap.Remove(ctx, c, ".", ropt)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ExitInterrupted
+		}
 		fmt.Fprintf(stderr, "gh reap: %v\n", err)
 		return ExitFail
 	}
@@ -300,6 +312,9 @@ func runRemove(ctx context.Context, c conn.Conn, f flags, opt reap.GatherOptions
 		writeJSON(stdout, rep)
 	} else {
 		printSummary(stdout, stderr, rep)
+	}
+	if ctx.Err() != nil {
+		return ExitInterrupted
 	}
 	if rep.Canceled {
 		return ExitOK

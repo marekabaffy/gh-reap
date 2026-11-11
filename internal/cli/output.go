@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -247,15 +248,27 @@ func printSections(w io.Writer, sections []section) {
 	}
 }
 
-// confirm shows what remove is about to remove and asks; only "y" or "yes" says yes.
-func confirm(w io.Writer, answers *bufio.Reader, items []reap.Item) bool {
+// confirm shows what remove is about to remove and asks; only "y" or "yes" says
+// yes. An interrupt while it waits says no.
+func confirm(ctx context.Context, w io.Writer, answers *bufio.Reader, items []reap.Item) bool {
 	rows := make([]row, 0, len(items))
 	for _, it := range items {
 		rows = append(rows, row{name: name(it), status: removeInfo(it, false)})
 	}
 	printSections(w, []section{{"To remove", sectionStyle{dim, dim}, rows}})
 	fmt.Fprintf(w, "\n%s [y/N] ", style(bold, "Remove "+scope(items)+"?"))
-	answer, _ := answers.ReadString('\n')
+	typed := make(chan string, 1)
+	go func() {
+		answer, _ := answers.ReadString('\n')
+		typed <- answer
+	}()
+	var answer string
+	select {
+	case answer = <-typed:
+	case <-ctx.Done():
+		fmt.Fprintln(w) // end the prompt's line, after the terminal's ^C
+		return false
+	}
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes":
 		return true

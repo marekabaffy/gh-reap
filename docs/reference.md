@@ -103,6 +103,7 @@ per item: `ref`, `kind`, `branch`, `path`, `result` (`removed`, `failed`, `refus
 | 0 | success |
 | 1 | an item failed or was refused, the checks were incomplete, or another `remove` holds the lock |
 | 2 | usage error |
+| 130 | interrupted (Ctrl-C, a kill, or a closed terminal) |
 
 Listing a folder of repositories, the exit status covers every repository.
 

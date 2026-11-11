@@ -52,7 +52,7 @@ type Report struct {
 	Root     string   `json:"repo"`
 	Problems []string `json:"problems,omitempty"`
 	Results  []Result `json:"results"`
-	Canceled bool     `json:"-"` // Confirm said no
+	Canceled bool     `json:"-"` // Confirm said no, or an interrupt answered for it
 }
 
 // OK is true when every chosen item was removed and the list was complete.
@@ -185,6 +185,9 @@ func recheck(ctx context.Context, c conn.Conn, inv *Inventory, it Item, opt Remo
 func removeOne(ctx context.Context, c conn.Conn, inv *Inventory, it Item, opt RemoveOptions) Result {
 	now, reason, why := recheck(ctx, c, inv, it, opt)
 	if now == nil {
+		if ctx.Err() != nil {
+			return result(it, Failed, ReasonCanceled, "interrupted")
+		}
 		return result(it, Refused, reason, "changed: "+why)
 	}
 	it = *now
@@ -209,6 +212,9 @@ func removeOne(ctx context.Context, c conn.Conn, inv *Inventory, it Item, opt Re
 			// The hook may have changed the tree: left a process running, made it
 			// dirty, moved or detached its HEAD. Check everything again.
 			if now, reason, why := recheck(ctx, c, inv, it, opt); now == nil {
+				if ctx.Err() != nil {
+					return result(it, Failed, ReasonCanceled, "interrupted")
+				}
 				return result(it, Failed, reason, "changed by teardown hook: "+why)
 			}
 		}
