@@ -56,6 +56,15 @@ func TestRun_Help(t *testing.T) {
 
 // Styled output is the plain output plus escape codes, and nothing else:
 // the text and the alignment do not change.
+func TestRun_Version(t *testing.T) {
+	for _, args := range [][]string{{"--version"}, {"remove", "--version"}} {
+		var out bytes.Buffer
+		if code := Run(args, strings.NewReader(""), &out, io.Discard); code != ExitOK || !regexp.MustCompile(`^gh reap version \S+\n$`).MatchString(out.String()) {
+			t.Errorf("%v: exit %d, %q", args, code, out.String())
+		}
+	}
+}
+
 func TestColor_OnlyAddsEscapes(t *testing.T) {
 	yes, no := bufio.NewReader(strings.NewReader("y\n")), bufio.NewReader(strings.NewReader("n\n"))
 	render := func(answers *bufio.Reader) string {
@@ -137,7 +146,7 @@ func TestRun_FlagErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--version"}, "gh reap: unknown flag: --version\n"},
+		{[]string{"--force"}, "gh reap: unknown flag: --force\n"},
 		{[]string{"-all"}, "gh reap: unknown shorthand flag: 'a' in -all\n"},
 		{[]string{"remove", "--all"}, "gh reap: unknown flag: --all\n"},
 	} {

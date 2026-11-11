@@ -18,6 +18,6 @@ body:
     id: version
     attributes:
       label: Versions
-      description: "`gh extension list`, `git --version`, and your OS"
+      description: "`gh reap --version`, `git --version`, and your OS"
     validations:
       required: true
