@@ -104,15 +104,29 @@ func Remove(ctx context.Context, c conn.Conn, dir string, opt RemoveOptions) (*R
 			chosen = append(chosen, it)
 		}
 	}
+	choose := func(it Item) {
+		if it.Verdict != VerdictRemove {
+			if !seen[it.Ref] {
+				seen[it.Ref] = true
+				add(result(it, Refused, it.Reason, it.Detail))
+			}
+			return
+		}
+		pick(it)
+	}
 	for _, ref := range opt.Refs {
 		it := inv.Find(ref)
-		switch {
-		case it == nil:
+		if it == nil {
 			add(Result{Ref: ref, Result: Refused, Reason: ReasonNotFound, Detail: "not found"})
-		case it.Verdict != VerdictRemove:
-			add(Result{Ref: it.Ref, Kind: it.Kind, Branch: it.Branch, Path: it.Path, Result: Refused, Reason: it.Reason, Detail: it.Detail})
-		default:
-			pick(*it)
+			continue
+		}
+		choose(*it)
+		// A branch whose worktree folder is gone is listed twice: the registration,
+		// and the branch on its own. Its name asks for both.
+		if it.Reason == ReasonFolderGone && it.Branch != "" && ref == it.Branch {
+			if b := inv.Find(RefOf(KindBranch, it.Branch)); b != nil {
+				choose(*b)
+			}
 		}
 	}
 	if len(opt.Refs) == 0 {
