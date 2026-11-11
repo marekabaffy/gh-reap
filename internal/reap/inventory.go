@@ -185,7 +185,7 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 		if !wanted(ref) {
 			continue
 		}
-		f := &BranchFacts{Name: b.Name, OID: b.OID, Keep: keepMarks[b.Name], Protected: protected[b.Name], PRErr: inv.prErr}
+		f := &BranchFacts{Name: b.Name, OID: b.OID, Keep: keepMarks[b.Name], Protected: protected[b.Name], Remote: remoteName, PRErr: inv.prErr}
 		facts[b.Name] = f
 		if inv.prs == nil {
 			continue
