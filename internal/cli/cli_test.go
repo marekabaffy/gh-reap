@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"regexp"
@@ -62,7 +63,7 @@ func TestColor_OnlyAddsEscapes(t *testing.T) {
 		printInventory(&out, inventory(), true, true)
 		printInventory(&out, inventory(), false, false)
 		printInventory(&out, &reap.Inventory{Root: "/r", Warnings: []string{"w"}, Problems: []string{"p"}}, false, false)
-		confirm(&out, answers, []reap.Item{{Kind: reap.KindBranch, Branch: "b"}, {Kind: reap.KindWorktree, Branch: "longer"}})
+		confirm(context.Background(), &out, answers, []reap.Item{{Kind: reap.KindBranch, Branch: "b"}, {Kind: reap.KindWorktree, Branch: "longer"}})
 		printResult(&out, reap.Result{Branch: "b", Result: reap.Removed})
 		printResult(&out, reap.Result{Branch: "h", Result: reap.Failed, Detail: "boom"})
 		printSummary(&out, io.Discard, &reap.Report{Results: []reap.Result{{Result: reap.Removed}, {Result: reap.Failed}}})
@@ -310,7 +311,7 @@ func TestConfirm(t *testing.T) {
 	items := []reap.Item{inv.Items[1], inv.Items[5]} // the login worktree, the typo branch
 	for answer, want := range map[string]bool{"y\n": true, "YES\n": true, "n\n": false, "\n": false, "": false} {
 		var out bytes.Buffer
-		if got := confirm(&out, bufio.NewReader(strings.NewReader(answer)), items); got != want {
+		if got := confirm(context.Background(), &out, bufio.NewReader(strings.NewReader(answer)), items); got != want {
 			t.Errorf("%q: %v", answer, got)
 		}
 		prompt := `To remove:
@@ -324,6 +325,21 @@ Remove 1 worktree and 2 branches? [y/N] `
 		if out.String() != prompt {
 			t.Errorf("%q: got\n%s\nwant\n%s", answer, out.String(), prompt)
 		}
+	}
+}
+
+// An interrupt answers no, even though nobody typed anything.
+func TestConfirm_Interrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	never, w := io.Pipe()
+	defer w.Close()
+	var out bytes.Buffer
+	if confirm(ctx, &out, bufio.NewReader(never), inventory().Items[1:2]) {
+		t.Error("an interrupted prompt said yes")
+	}
+	if !strings.HasSuffix(out.String(), "[y/N] \n") {
+		t.Errorf("got %q", out.String())
 	}
 }
 

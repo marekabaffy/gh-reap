@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -37,29 +39,57 @@ func TestLock(t *testing.T) {
 	release2()
 }
 
-func TestLock_StaleAndForeign(t *testing.T) {
-	host, _ := os.Hostname()
-	tests := []struct {
-		name, content, want string
-	}{
-		{"dead process here", "pid=999999999\nhost=" + host + "\nstarted=t\n", "no longer running, so the lock is stale"},
-		{"other host", "pid=1\nhost=some-other-host\nstarted=t\n", "if no gh reap is running, delete the file"},
-		{"unreadable", "garbage", "pid unknown on unknown"},
+// A file left by a run that was killed holds no lock: the next run takes it.
+func TestLock_LeftoverFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, LockName)
+	if err := os.WriteFile(path, []byte("pid=999999999\nhost=elsewhere\nstarted=then\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, LockName), []byte(tt.content), 0o644); err != nil {
-				t.Fatal(err)
+	release, err := Lock(dir)
+	if err != nil {
+		t.Fatalf("a leftover file blocked the lock: %v", err)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "pid="+strconv.Itoa(os.Getpid())) || strings.Contains(string(data), "elsewhere") {
+		t.Errorf("lock file: %q", data)
+	}
+	release()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("release left the file")
+	}
+}
+
+// Of many runs at once, one holds the lock at a time, and none locks a file
+// another has just removed.
+func TestLock_Concurrent(t *testing.T) {
+	dir := t.TempDir()
+	var holders, taken atomic.Int32
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				release, err := Lock(dir)
+				if errors.Is(err, ErrLocked) {
+					continue
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if holders.Add(1) != 1 {
+					t.Error("two runs hold the lock")
+				}
+				taken.Add(1)
+				holders.Add(-1)
+				release()
 			}
-			_, err := Lock(dir)
-			if !errors.Is(err, ErrLocked) || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("got %v, want %q", err, tt.want)
-			}
-			if _, err := os.Stat(filepath.Join(dir, LockName)); err != nil {
-				t.Error("a refused run must not touch the lock")
-			}
-		})
+		}()
+	}
+	wg.Wait()
+	if taken.Load() == 0 {
+		t.Error("nobody took the lock")
 	}
 }
 

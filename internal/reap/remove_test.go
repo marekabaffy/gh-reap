@@ -336,16 +336,17 @@ func TestRemove_IncompleteListRemovesNothing(t *testing.T) {
 func TestRemove_Lock(t *testing.T) {
 	f := removable(t)
 	dir, _ := f.CommonDir(context.Background(), ".")
-	if err := os.WriteFile(filepath.Join(dir, LockName), []byte("pid=1\nhost=x\n"), 0o644); err != nil {
+	release, err := Lock(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	f.Calls = nil
-	_, err := Remove(context.Background(), f, ".", RemoveOptions{})
+	_, err = Remove(context.Background(), f, ".", RemoveOptions{})
 	if !errors.Is(err, ErrLocked) || len(mutations(f)) != 0 {
 		t.Errorf("got %v, calls %v", err, f.Calls)
 	}
 	// The lock is released after a run.
-	_ = os.Remove(filepath.Join(dir, LockName))
+	release()
 	remove(t, f, RemoveOptions{})
 	if _, err := os.Stat(filepath.Join(dir, LockName)); !os.IsNotExist(err) {
 		t.Error("lock not released")
@@ -366,6 +367,43 @@ func TestRemove_Canceled(t *testing.T) {
 	}
 	if got := outcomes(rep)["branch:squashed"]; got != "failed canceled" {
 		t.Errorf("after interrupt: %q", got)
+	}
+}
+
+// An interrupt while listing kills commands mid-answer: there is no list to act on
+// or to report, only the interrupt.
+func TestRemove_CanceledWhileListing(t *testing.T) {
+	f := removable(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	f.OnCall = func(key string) {
+		if key == "ProcessCwds" {
+			cancel()
+		}
+	}
+	rep, err := Remove(ctx, f, ".", RemoveOptions{GatherOptions: GatherOptions{workers: 1}})
+	if !errors.Is(err, context.Canceled) || rep != nil || len(mutations(f)) != 0 {
+		t.Errorf("got %v, %v, calls %v", rep, err, mutations(f))
+	}
+}
+
+// An interrupt during the check right before acting is an interrupt, not a change.
+func TestRemove_CanceledDuringRecheck(t *testing.T) {
+	f := removable(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	lists := 0
+	f.OnCall = func(key string) {
+		if key == "ProcessCwds" {
+			if lists++; lists == 2 {
+				cancel()
+			}
+		}
+	}
+	rep, err := Remove(ctx, f, ".", RemoveOptions{Refs: []string{"merged"}, GatherOptions: GatherOptions{workers: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outcomes(rep)["worktree:"+R+"/wt-merged"]; got != "failed canceled" || len(mutations(f)) != 0 {
+		t.Errorf("got %q, calls %v", got, mutations(f))
 	}
 }
 

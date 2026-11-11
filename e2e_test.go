@@ -860,35 +860,131 @@ func TestE2E_KeepAndUnkeep(t *testing.T) {
 	}
 }
 
-func TestE2E_Lock(t *testing.T) {
+// waitFor polls until the file exists.
+func (e *env) waitFor(path, what string) {
+	e.t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !e.exists(path) {
+		if time.Now().After(deadline) {
+			e.t.Fatalf("%s never happened", what)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A run that is killed outright cannot clean up, and still locks nobody out:
+// the kernel drops its lock, and the file it leaves means nothing.
+func TestE2E_KilledRunLeavesNoLock(t *testing.T) {
 	e := newEnv(t)
-	_, tip := e.worktree("a")
+	path, tip := e.worktree("a")
 	e.gh.set("a", pr{1, "MERGED", tip, ""})
-	lock := filepath.Join(e.main, ".git", "gh-reap.lock")
-	if err := os.WriteFile(lock, []byte("pid=999999\nhost=elsewhere\nstarted=then\n"), 0o644); err != nil {
+	started := filepath.Join(e.root, "started")
+	release := filepath.Join(e.root, "release")
+	e.hook("touch " + started + "\nwhile [ ! -e " + release + " ]; do sleep 0.05; done\n")
+
+	first := exec.Command(binary, "remove", "--yes")
+	first.Dir = e.main
+	first.Env = e.environ()
+	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
-	r := e.run(e.main, "remove", "--yes")
-	if r.code != 1 || !strings.Contains(r.stderr, "another gh reap run holds the lock") || !strings.Contains(r.stderr, lock) {
-		t.Errorf("locked: %+v", r)
+	e.waitFor(started, "the first run's hook")
+	_ = first.Process.Kill()
+	_ = first.Wait()
+	lock := filepath.Join(e.main, ".git", "gh-reap.lock")
+	if !e.exists(lock) {
+		t.Fatal("the killed run left no lock file: this test proves nothing")
 	}
-	if !e.hasBranch("a") {
-		t.Error("removed while locked")
+	// The hook it started outlives it, and must not hold the lock either.
+	if r := e.run(e.main, "remove", "--yes"); strings.Contains(r.stderr, "lock") {
+		t.Errorf("locked out by a dead run: %+v", r)
 	}
-	// From a worktree, the lock is the same one.
-	r = e.run(filepath.Join(e.root, "wt-a"), "remove", "--yes")
-	if r.code != 1 || !strings.Contains(r.stderr, lock) {
-		t.Errorf("locked from a worktree: %+v", r)
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	// A dead process on this host: the message says the lock is stale.
-	host, _ := os.Hostname()
-	_ = os.WriteFile(lock, []byte("pid=999999\nhost="+host+"\nstarted=then\n"), 0o644)
-	if r = e.run(e.main, "remove", "--yes"); !strings.Contains(r.stderr, "stale") {
-		t.Errorf("stale lock: %s", r.stderr)
+	e.hook("exit 0\n")
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		r := e.run(e.main, "remove", "--yes")
+		if r.code == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("never removed after the kill: %+v", r)
+		}
+		time.Sleep(50 * time.Millisecond) // the orphaned hook is still leaving the tree
+	}
+	if e.exists(path) || e.hasBranch("a") || e.exists(lock) {
+		t.Error("the run after the kill did not remove the tree, the branch and the lock file")
 	}
 	// list never takes the lock.
-	if _, r = e.list(e.main); r.code != 0 {
-		t.Errorf("list while locked: %+v", r)
+	if _, r := e.list(e.main); r.code != 0 {
+		t.Errorf("list: %+v", r)
+	}
+}
+
+// Ctrl-C at the question answers no at once, without waiting for Enter.
+func TestE2E_InterruptAtThePrompt(t *testing.T) {
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("no script(1) to give gh reap a terminal")
+	}
+	e := newEnv(t)
+	path, tip := e.worktree("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+
+	finished := make(chan run, 1)
+	go func() { finished <- e.inTerminal(e.main, "\x03", "remove") }()
+	select {
+	case r := <-finished:
+		if r.code != 130 || strings.Contains(r.stdout, "removed") {
+			t.Errorf("exit %d\n%q", r.code, r.stdout)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("still waiting for an answer after Ctrl-C")
+	}
+	if !e.exists(path) || !e.hasBranch("done") {
+		t.Error("interrupted, but removed")
+	}
+	if e.exists(filepath.Join(e.main, ".git", "gh-reap.lock")) {
+		t.Error("interrupted, and left the lock file")
+	}
+}
+
+// An interrupt while listing stops quietly: no list built from killed commands.
+func TestE2E_InterruptWhileListing(t *testing.T) {
+	e := newEnv(t)
+	path, tip := e.worktree("done")
+	e.gh.set("done", pr{1, "MERGED", tip, ""})
+	bin := filepath.Join(e.root, "bin")
+	started := filepath.Join(e.root, "lsof-started")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte("#!/bin/sh\ntouch "+started+"\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.path = bin + string(os.PathListSeparator) + e.path
+
+	for _, args := range [][]string{{}, {"--json"}, {"remove", "--yes"}} {
+		_ = os.Remove(started)
+		cmd := exec.Command(binary, args...)
+		cmd.Dir = e.main
+		cmd.Env = e.environ()
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		e.waitFor(started, "lsof")
+		_ = cmd.Process.Signal(os.Interrupt)
+		err := cmd.Wait()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 130 || stdout.Len() > 0 || stderr.Len() > 0 {
+			t.Errorf("%v: %v\nstdout: %s\nstderr: %s", args, err, stdout.String(), stderr.String())
+		}
+	}
+	if !e.exists(path) || !e.hasBranch("done") || e.exists(filepath.Join(e.main, ".git", "gh-reap.lock")) {
+		t.Error("interrupted, but something was removed or the lock file left")
 	}
 }
 
@@ -916,10 +1012,15 @@ func TestE2E_ConcurrentRunsRefused(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	second := e.run(e.main, "remove", "--yes")
+	// From a worktree, the lock is the same one.
+	third := e.run(filepath.Join(e.root, "wt-slow"), "remove", "--yes")
 	_ = os.WriteFile(release, nil, 0o644)
 	err := first.Wait()
-	if second.code != 1 || !strings.Contains(second.stderr, "another gh reap run holds the lock") {
-		t.Errorf("second run: %+v", second)
+	lock := filepath.Join(e.main, ".git", "gh-reap.lock")
+	for _, r := range []run{second, third} {
+		if r.code != 1 || !strings.Contains(r.stderr, "another gh reap run holds the lock: "+lock) || !strings.Contains(r.stderr, "wait for it to finish") {
+			t.Errorf("run during another: %+v", r)
+		}
 	}
 	if err != nil {
 		t.Errorf("first run: %v\n%s", err, out.String())

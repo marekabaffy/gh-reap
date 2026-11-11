@@ -317,6 +317,10 @@ func Gather(ctx context.Context, c conn.Conn, dir string, opt GatherOptions) (*I
 		}
 		return false // worktrees keep git's order (main first); branches come sorted from git
 	})
+	// An interrupt kills the commands above mid-answer: what they said is no list.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return inv, nil
 }
 
